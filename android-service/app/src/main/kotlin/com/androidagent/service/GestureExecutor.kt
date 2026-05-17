@@ -99,10 +99,18 @@ class GestureExecutor(private val service: AccessibilityService) {
         val latch = CountDownLatch(1)
         var success = false
 
-        val dispatched = service.dispatchGesture(gesture, null, null) {
-            success = it
-            latch.countDown()
+        val callback = object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                success = true
+                latch.countDown()
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                success = false
+                latch.countDown()
+            }
         }
+
+        val dispatched = service.dispatchGesture(gesture, callback, null)
 
         if (dispatched) {
             latch.await(5, TimeUnit.SECONDS)

@@ -5,15 +5,15 @@ import com.androidagent.App
 import com.androidagent.model.Command
 import com.androidagent.model.CommandResponse
 import com.google.gson.Gson
-import fi.iki.elonen.NanoHTTPD
+import fi.iki.elonen.NanoHTTPD.IHTTPSession
 import fi.iki.elonen.NanoWSD
 import kotlinx.coroutines.*
 import java.io.IOException
 
 class AgentWebSocketServer(
-    port: Int,
+    private val port: Int,
     private val handler: CommandHandler
-) : NanoWSD("0.0.0.0", port) {
+) : NanoWSD(port) {
 
     companion object {
         private const val TAG = "${App.TAG}:WS"
@@ -26,7 +26,9 @@ class AgentWebSocketServer(
         return AgentWebSocket(handshake)
     }
 
-    inner class AgentWebSocket(handshake: IHTTPSession) : WebSocket(handshake) {
+    inner class AgentWebSocket(hs: IHTTPSession) : WebSocket(hs) {
+        private val handshake = hs
+
         override fun onOpen() {
             Log.i(TAG, "Client connected: ${handshake.remoteIpAddress}")
         }
@@ -55,7 +57,6 @@ class AgentWebSocketServer(
         }
 
         override fun onPong(frame: WebSocketFrame?) {
-            // Keep-alive
         }
 
         override fun onException(exception: IOException?) {
@@ -63,9 +64,9 @@ class AgentWebSocketServer(
         }
     }
 
-    override fun start(): NanoHTTPD.Response {
+    override fun start() {
         Log.i(TAG, "Starting WebSocket server on port $port")
-        return super.start()
+        super.start()
     }
 
     override fun stop() {

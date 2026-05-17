@@ -108,7 +108,7 @@ class CommandHandler(private val service: AgentAccessibilityService) {
 
     private fun handleLaunchApp(cmd: Command): CommandResponse {
         val pkg = cmd.args["package_name"] as? String ?: return badArg(cmd, "package_name")
-        try {
+        return try {
             val intent = service.packageManager.getLaunchIntentForPackage(pkg)
             if (intent != null) {
                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -132,7 +132,8 @@ class CommandHandler(private val service: AgentAccessibilityService) {
 
     private fun handleScreenshot(): CommandResponse {
         return try {
-            val bitmap = service.takeScreenshot()
+            val bitmap = service.captureScreenshot()
+                ?: return CommandResponse.error("screenshot", "Screenshot requires Android 14+")
             val stream = java.io.ByteArrayOutputStream()
             bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, stream)
             val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)

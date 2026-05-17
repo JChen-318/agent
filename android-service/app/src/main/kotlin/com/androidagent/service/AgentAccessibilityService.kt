@@ -78,30 +78,13 @@ class AgentAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    fun takeScreenshot(): Bitmap {
-        val displayMetrics = resources.displayMetrics
-        val w = displayMetrics.widthPixels
-        val h = displayMetrics.heightPixels
-
+    fun captureScreenshot(): Bitmap? {
         return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            takeScreenshot(w, h)
+            @Suppress("DEPRECATION")
+            takeScreenshot()
         } else {
-            takeScreenshotAsync(w, h)
+            null  // screenshot via accessibility service requires API 34+
         }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun takeScreenshotAsync(width: Int, height: Int): Bitmap {
-        val latch = java.util.concurrent.CountDownLatch(1)
-        var result: Bitmap? = null
-        takeScreenshot(
-            android.os.Handler.createAsync(android.os.Looper.getMainLooper())
-        ) { screenshot ->
-            result = screenshot
-            latch.countDown()
-        }
-        latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
-        return result ?: throw RuntimeException("Screenshot timed out")
     }
 
     private fun startForeground() {

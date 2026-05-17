@@ -14,7 +14,7 @@ object ScreenCapturer {
     fun captureAsBitmap(): Bitmap? {
         val service = AgentAccessibilityService.instance ?: return null
         return try {
-            service.takeScreenshot()
+            service.captureScreenshot()
         } catch (e: Exception) {
             null
         }
