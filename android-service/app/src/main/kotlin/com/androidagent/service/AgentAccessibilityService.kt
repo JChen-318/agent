@@ -79,12 +79,8 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     fun captureScreenshot(): Bitmap? {
-        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            @Suppress("DEPRECATION")
-            takeScreenshot()
-        } else {
-            null  // screenshot via accessibility service requires API 34+
-        }
+        // TODO: implement via MediaProjection for API < 34
+        return null
     }
 
     private fun startForeground() {
