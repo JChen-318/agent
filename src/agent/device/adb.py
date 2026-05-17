@@ -181,3 +181,56 @@ class AdbManager:
         """Remove all port forwards."""
         self._run("forward", "--remove-all")
         self._forwarded.clear()
+
+    def connect_tcpip(self, host: str, port: int = 5555) -> bool:
+        """
+        Connect to a device over WiFi via ADB TCP/IP.
+        The device must have ADB over TCP/IP enabled first (adb tcpip 5555 via USB).
+        """
+        code, stdout, stderr = self._run("connect", f"{host}:{port}", timeout=10.0)
+        if code == 0:
+            logger.info(f"ADB connected to {host}:{port}")
+            return True
+        logger.warning(f"ADB connect to {host}:{port} failed: {stderr.strip()}")
+        return False
+
+    def enable_tcpip(self, serial: str, port: int = 5555) -> bool:
+        """
+        Enable ADB over TCP/IP on a USB-connected device.
+        After this, you can unplug USB and use `adb connect <ip>:<port>`.
+        """
+        code, stdout, stderr = self._run("-s", serial, "tcpip", str(port), timeout=10.0)
+        if code == 0:
+            logger.info(f"ADB TCP/IP enabled on {serial} (port {port})")
+            return True
+        logger.warning(f"ADB tcpip failed: {stderr.strip()}")
+        return False
+
+    def disconnect_tcpip(self, host: str, port: int = 5555) -> bool:
+        """Disconnect an ADB TCP/IP connection."""
+        code, stdout, stderr = self._run("disconnect", f"{host}:{port}", timeout=10.0)
+        return code == 0
+
+    def get_device_ip(self, serial: str) -> str:
+        """Get the WiFi IP address of a device."""
+        code, stdout, _ = self._run(
+            "-s", serial, "shell", "ip", "route", "get", "8.8.8.8",
+            timeout=5.0,
+        )
+        if code == 0 and stdout:
+            for word in stdout.split():
+                if "src" in word or "." in word:
+                    parts = word.split("src")[-1]
+                    if "." in parts and not parts.startswith("8.8"):
+                        return parts.strip()
+        # Fallback: try wlan0
+        code, stdout, _ = self._run(
+            "-s", serial, "shell", "ip", "addr", "show", "wlan0",
+            timeout=5.0,
+        )
+        if code == 0 and stdout:
+            import re
+            match = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", stdout)
+            if match:
+                return match.group(1)
+        return ""

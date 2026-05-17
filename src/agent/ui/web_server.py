@@ -328,6 +328,58 @@ class AgentWebServer:
                         "host": "127.0.0.1", "port": local_port}
             return {"status": "error", "message": "Forward failed"}
 
+        @app.post("/api/adb-connect")
+        async def adb_connect_wireless(data: dict):
+            """Connect to a device over WiFi via ADB TCP/IP."""
+            if not self.discovery or not self.discovery._adb:
+                return {"status": "error", "message": "ADB not available"}
+            host = data.get("host", "")
+            port = data.get("port", 5555)
+            if not host:
+                return {"status": "error", "message": "Host IP required"}
+            ok = self.discovery._adb.connect_tcpip(host, port)
+            if ok:
+                return {"status": "ok", "message": f"ADB connected to {host}:{port}"}
+            return {"status": "error", "message": f"Failed to connect to {host}:{port}"}
+
+        @app.post("/api/adb-enable-tcpip")
+        async def adb_enable_tcpip(data: dict):
+            """Enable ADB over TCP/IP on a USB-connected device."""
+            if not self.discovery or not self.discovery._adb:
+                return {"status": "error", "message": "ADB not available"}
+            serial = data.get("serial", "")
+            port = data.get("port", 5555)
+            if not serial:
+                return {"status": "error", "message": "Serial required"}
+            ok = self.discovery._adb.enable_tcpip(serial, port)
+            if ok:
+                # Try to get device IP
+                ip = self.discovery._adb.get_device_ip(serial)
+                if ip:
+                    return {"status": "ok", "message": f"TCP/IP enabled. Device IP: {ip}", "ip": ip}
+                return {"status": "ok", "message": "TCP/IP enabled. Unplug USB and connect via IP."}
+            return {"status": "error", "message": "Failed to enable TCP/IP"}
+
+        @app.get("/api/network-info")
+        async def network_info():
+            """Return local machine network info for wireless debugging."""
+            import socket
+            local_ip = "127.0.0.1"
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.settimeout(0.1)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                pass
+            subnet = ".".join(local_ip.split(".")[:3]) + ".0/24"
+            return {
+                "local_ip": local_ip,
+                "subnet": subnet,
+                "device_port": self.bridge.port if self.bridge else 18765,
+            }
+
         @app.post("/api/command")
         async def send_command(data: dict):
             if not self.loop:

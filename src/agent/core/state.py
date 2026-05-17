@@ -92,49 +92,99 @@ class GlobalState:
             self.ui_tree = UIElement.from_dict(ui_tree_raw)
         self.iteration_count += 1
 
-    def format_ui_tree_for_llm(self, max_depth: int = 8, max_text_len: int = 80) -> str:
-        """Serialize current UI tree to a compact text format for the LLM."""
+    def format_ui_tree_for_llm(self, max_depth: int = 5, max_text_len: int = 60,
+                              prune: bool = True, max_lines: int = 120) -> str:
+        """Serialize current UI tree to a compact text format for the LLM.
+
+        Optimization: Only includes actionable nodes (clickable, editable, has text).
+        Filters layout containers, invisible nodes, and duplicates.
+        """
         if not self.ui_tree:
             return "[No UI tree available. Use get_ui_tree() to capture the screen.]"
 
         lines = []
+        seen_texts = set()  # Dedup same text across nodes
+        screen_height = 0
+        screen_width = 0
+        if self.ui_tree.bounds:
+            screen_height = self.ui_tree.bounds.get("bottom", 0)
+            screen_width = self.ui_tree.bounds.get("right", 0)
+
+        def _is_actionable(node: UIElement) -> bool:
+            """Only keep nodes that are clickable, editable, scrollable, or have text."""
+            if node.is_clickable or node.is_editable or node.is_scrollable:
+                return True
+            if node.text or node.content_desc:
+                return True
+            return False
+
+        def _is_status_bar(node: UIElement) -> bool:
+            """Detect and skip status bar area (top ~80px)."""
+            if node.bounds:
+                b = node.bounds
+                if b.get("top", 0) < 80 and b.get("bottom", 0) < 80 and not node.is_clickable:
+                    return True
+            return False
 
         def _format_node(node: UIElement, depth: int = 0) -> None:
             if depth > max_depth:
                 return
-            if not node.is_enabled and depth > 0:
+            if len(lines) >= max_lines:
                 return
+            if prune:
+                if not node.is_enabled and depth > 0:
+                    return
+                # Skip invisible areas (status bar, navigation bar)
+                if _is_status_bar(node):
+                    pass  # Still process children - some overlays appear here
+                # Skip empty layout containers
+                if not _is_actionable(node) and node.children:
+                    for child in node.children:
+                        _format_node(child, depth)
+                    return
 
             indent = "  " * depth
-
             props = []
             if node.is_clickable:
-                props.append("clickable")
+                props.append("C")  # Short form
             if node.is_scrollable:
-                props.append("scrollable")
+                props.append("S")
             if node.is_editable:
-                props.append("editable")
+                props.append("E")
             if node.is_focused:
-                props.append("focused")
+                props.append("F")
 
             text = node.text[:max_text_len] if node.text else ""
             desc = node.content_desc[:max_text_len] if node.content_desc else ""
 
             label = text or desc or ""
-            if label and len(label) > max_text_len:
-                label = label[:max_text_len - 3] + "..."
+            if label:
+                label = label[:max_text_len]
+                # Dedup
+                if label in seen_texts and not node.is_clickable:
+                    label = ""
+                else:
+                    seen_texts.add(label)
 
             bounds_str = ""
-            if node.bounds:
-                b = node.bounds
+            if node.bounds and node.is_clickable:
                 center = node.get_center()
-                bounds_str = f" @({b.get('left',0)},{b.get('top',0)},{b.get('right',0)},{b.get('bottom',0)})"
                 if center:
-                    bounds_str += f" center=({center[0]},{center[1]})"
+                    bounds_str = f" ({center[0]},{center[1]})"
 
             prop_str = f"[{','.join(props)}]" if props else ""
-            rid = f"#{node.resource_id}" if node.resource_id else ""
-            line = f"{indent}{node.type}{rid} \"{label}\" {prop_str}{bounds_str}"
+            rid = ""
+            if node.resource_id:
+                # Keep only the last part of the resource ID
+                short_id = node.resource_id.split("/")[-1] if "/" in node.resource_id else node.resource_id
+                rid = f" #{short_id}"
+
+            if not label and not props and not rid:
+                for child in node.children:
+                    _format_node(child, depth)
+                return
+
+            line = f"{indent}{node.type}{rid} {label}{prop_str}{bounds_str}"
             lines.append(line)
 
             for child in node.children:
@@ -146,7 +196,28 @@ class GlobalState:
         tree_text = "\n".join(lines)
         self.last_ui_hash = hashlib.md5(tree_text.encode()).hexdigest()[:8]
 
+        if len(lines) >= max_lines:
+            tree_text += f"\n[Truncated at {max_lines} lines. {len(lines)} total actionable nodes.]"
+
         return tree_text
+
+    def get_ui_summary(self) -> str:
+        """Ultra-compact UI summary for minimal context. Use when UI is unchanged."""
+        if not self.ui_tree:
+            return "[No UI tree]"
+        lines = []
+        def _collect(n: UIElement, d: int = 0):
+            if d > 3 or len(lines) > 60:
+                return
+            label = (n.text or n.content_desc or "")[:40]
+            if n.is_clickable or label:
+                center = n.get_center() if n.bounds else None
+                c = f"({center[0]},{center[1]})" if center else ""
+                lines.append(f"{n.type}#{n.resource_id and n.resource_id.split('/')[-1] or ''}|{label}|{c}")
+            for ch in n.children:
+                _collect(ch, d + 1)
+        _collect(self.ui_tree)
+        return "|".join(lines)
 
     def needs_confirmation(self, action: str, args: dict) -> bool:
         """Check if this action needs user confirmation based on safety level."""

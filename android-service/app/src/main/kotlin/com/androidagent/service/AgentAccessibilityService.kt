@@ -28,13 +28,20 @@ class AgentAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: AgentAccessibilityService? = null
             private set
+
+    @Volatile
+    var nsdRegistered: Boolean = false
+        private set
+
+    @Volatile
+    var connectedClients: Int = 0
+        private set
     }
 
     lateinit var gestureExecutor: GestureExecutor
     lateinit var uiTreeCapturer: UiTreeCapturer
     private var webSocketServer: AgentWebSocketServer? = null
     private var nsdManager: NsdManager? = null
-    private var nsdRegistered = false
 
     override fun onCreate() {
         super.onCreate()
@@ -87,7 +94,25 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     fun captureScreenshot(): Bitmap? {
-        // TODO: implement via MediaProjection for API < 34
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val future = java.util.concurrent.CompletableFuture<Bitmap?>()
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                java.util.concurrent.Executors.newSingleThreadExecutor()
+            ) { screenshot ->
+                if (screenshot != null) {
+                    future.complete(screenshot.copy(screenshot.config!!, true))
+                    screenshot.recycle()
+                } else {
+                    future.complete(null)
+                }
+            }
+            try {
+                return future.get(3, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: Exception) {
+                return null
+            }
+        }
         return null
     }
 

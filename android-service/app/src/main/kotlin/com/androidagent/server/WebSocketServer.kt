@@ -26,15 +26,23 @@ class AgentWebSocketServer(
         return AgentWebSocket(handshake)
     }
 
+    @Volatile
+    var connectedClients: Int = 0
+        private set
+
     inner class AgentWebSocket(hs: IHTTPSession) : WebSocket(hs) {
         private val handshake = hs
 
         override fun onOpen() {
-            Log.i(TAG, "Client connected: ${handshake.remoteIpAddress}")
+            connectedClients++
+            com.androidagent.service.AgentAccessibilityService.instance?.connectedClients = connectedClients
+            Log.i(TAG, "Client connected: ${handshake.remoteIpAddress} (total: $connectedClients)")
         }
 
         override fun onClose(code: WebSocketFrame.CloseCode, reason: String, initiatedByRemote: Boolean) {
-            Log.i(TAG, "Client disconnected: $reason")
+            connectedClients--
+            com.androidagent.service.AgentAccessibilityService.instance?.connectedClients = connectedClients
+            Log.i(TAG, "Client disconnected: $reason (total: $connectedClients)")
         }
 
         override fun onMessage(message: WebSocketFrame) {

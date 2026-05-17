@@ -1,6 +1,7 @@
 """Main ReAct agent loop — the central orchestration engine."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
@@ -45,6 +46,14 @@ class AgentLoop:
         # Optimization flags
         self._ui_fresh: bool = False
         self._last_action: Optional[str] = None
+        self._last_ui_hash: Optional[str] = None
+
+        # Decision cache: (ui_hash, user_intent) → list of tool calls
+        self._decision_cache: dict[tuple, list] = {}
+        self._cache_max_size = 100
+
+        # Pre-fetched UI tree (captured during LLM call)
+        self._prefetched_ui: Optional[dict] = None
 
         # Callbacks
         self.on_speak: Optional[callable] = None
@@ -224,13 +233,32 @@ class AgentLoop:
         await self._re_act_loop(exit_on_text=False)
 
     async def _re_act_loop(self, *, exit_on_text: bool) -> None:
-        """Core ReAct loop: observe → think → act. Repeat until task_complete or max iterations."""
+        """Core ReAct loop: observe → think → batch act. Repeat until task_complete."""
 
         while self.running:
-            # 1. Capture device state (skip if UI was just refreshed by LLM)
+            # Cache check: same UI + same last user message
+            if self.state.last_ui_hash and self._last_ui_hash:
+                cache_key = (self.state.last_ui_hash, self._user_intent_hash())
+                if cache_key in self._decision_cache:
+                    cached_calls = self._decision_cache[cache_key]
+                    logger.info(f"Cache hit — replaying {len(cached_calls)} tool calls")
+                    for tool_call in cached_calls:
+                        await self._execute_tool_call(tool_call)
+                        if tool_call["_name"] == "task_complete":
+                            return
+                        if tool_call["_name"] == "ask_user":
+                            break
+                    continue
+
+            self._last_ui_hash = self.state.last_ui_hash
+
+            # 1. Capture device state + Pre-fetch UI for next iteration
             if self._ui_fresh:
                 self._ui_fresh = False
                 self.state.iteration_count += 1
+            elif self._prefetched_ui:
+                self.state.update_device_state(self._prefetched_ui)
+                self._prefetched_ui = None
             else:
                 try:
                     ui_tree = await self.device.get_ui_tree()
@@ -238,10 +266,10 @@ class AgentLoop:
                 except Exception as e:
                     logger.warning(f"Failed to get UI tree: {e}")
 
-            # 2. Build LLM context
+            # 2. Build LLM context (pruned UI tree)
             messages = self._build_messages()
 
-            # 3. Call LLM
+            # 3. Call LLM (asynchronously pre-fetch next UI if action will cause change)
             logger.info(f"Calling LLM ({len(messages)} messages)...")
             response = await self.llm.chat(
                 messages=messages,
@@ -254,7 +282,7 @@ class AgentLoop:
                 f"finish={response.finish_reason}"
             )
 
-            # 4. Process response
+            # 4. Process ALL tool calls in batch before re-calling LLM
             if response.tool_calls:
                 serialized_calls = [
                     {
@@ -269,7 +297,18 @@ class AgentLoop:
                 ]
                 self.state.add_message("assistant", None, tool_calls=serialized_calls)
 
-                for tool_call in response.tool_calls:
+                # Cache these tool calls for this UI state
+                cache_key = (self._last_ui_hash, self._user_intent_hash())
+                self._add_to_cache(cache_key, [
+                    {"_name": tc.name, "id": tc.id, **tc.arguments}
+                    for tc in response.tool_calls
+                ])
+
+                # Track if we need UI refresh after batch
+                ui_changing_actions = 0
+                need_ui_refresh = False
+
+                for i, tool_call in enumerate(response.tool_calls):
                     action = tool_call.name
                     args = tool_call.arguments
                     self._last_action = action
@@ -290,10 +329,18 @@ class AgentLoop:
                             self.on_speak(question)
                         answer = await self._get_input()
                         self.state.add_message("user", answer or "ok")
-                        break
+                        break  # Break batch on ask_user
 
                     if action == "get_ui_tree":
                         self._ui_fresh = True
+                        continue  # Skip execution, mark as fresh
+
+                    # Track screen-changing actions
+                    if action in ("launch_app", "click", "click_by_text", "back", "home",
+                                 "recent_apps", "scroll", "swipe", "long_press"):
+                        ui_changing_actions += 1
+                        if ui_changing_actions >= 1 and i < len(response.tool_calls) - 1:
+                            need_ui_refresh = True
 
                     # Safety check
                     block_reason = self.state.check_safety(action, args)
@@ -302,7 +349,7 @@ class AgentLoop:
                         self.state.add_message("tool", result, tool_call_id=tool_call.id)
                         continue
 
-                    # Confirmation check
+                    # Confirmation check (auto-confirm in non-interactive mode)
                     if self.state.needs_confirmation(action, args):
                         logger.info(f"Confirmation needed for: {action}({args})")
                         try:
@@ -316,16 +363,16 @@ class AgentLoop:
                                 )
                                 continue
                         except EOFError:
-                            pass  # Non-interactive mode: auto-confirm
+                            pass
 
-                    # Anti-detection: coordinate jitter
+                    # Anti-detection: coordinate jitter (only for click/long_press/swipe)
                     if action in ("click", "long_press", "swipe"):
                         args = dict(args)
                         for coord_key in ("x", "y", "x1", "y1", "x2", "y2"):
                             if coord_key in args and isinstance(args[coord_key], (int, float)):
                                 args[coord_key] = max(0, int(args[coord_key]) + random.randint(-3, 3))
 
-                    # Resolve app package names in launch_app actions
+                    # Resolve app package names
                     from agent.nlu.app_mapper import resolve_action_args
                     args = resolve_action_args(action, args)
 
@@ -340,8 +387,15 @@ class AgentLoop:
                     if result.get("status") == "error":
                         logger.warning(f"Action error: {result.get('error')}")
 
-                    # Anti-detection: random micro-delay between actions
-                    await asyncio.sleep(random.uniform(0.05, 0.25))
+                    await asyncio.sleep(random.uniform(0.02, 0.10))
+
+                # Pre-fetch UI after screen-changing batch
+                if need_ui_refresh:
+                    try:
+                        self._prefetched_ui = await self.device.get_ui_tree()
+                        self._ui_fresh = True
+                    except Exception:
+                        pass
             else:
                 text = response.content
                 if text:
@@ -356,41 +410,72 @@ class AgentLoop:
             # Prevent infinite loops
             max_iters = self.state.max_iterations if self.state.current_plan is None else 30
             if self.state.iteration_count > max_iters:
-                logger.warning(f"Max iterations ({max_iters}) reached, stopping loop")
+                logger.warning(f"Max iterations ({max_iters}) reached")
                 self.state.add_message("assistant", f"Reached maximum steps ({max_iters}). Stopping.")
                 return
 
+    async def _execute_tool_call(self, tc: dict) -> None:
+        """Replay a cached tool call without LLM."""
+        action = tc["_name"]
+        args = {k: v for k, v in tc.items() if k not in ("_name", "id")}
+        if action in ("task_complete", "ask_user"):
+            return
+        result = await self.device.execute(action, args)
+        self.state.add_message("tool", result, tool_call_id=tc.get("id", "cached"))
+        if result.get("status") == "error":
+            logger.warning(f"Cached action error: {result.get('error')}")
+
+    def _user_intent_hash(self) -> str:
+        """Hash the last user message to use as cache key."""
+        for msg in reversed(self.state.messages):
+            if msg["role"] == "user":
+                content = msg["content"] or ""
+                return hashlib.md5(content.encode()).hexdigest()[:8]
+        return "none"
+
+    def _add_to_cache(self, key: tuple, tool_calls: list) -> None:
+        """Add decision to cache with LRU eviction."""
+        if key in self._decision_cache:
+            return
+        if len(self._decision_cache) >= self._cache_max_size:
+            # Pop oldest entry
+            oldest = next(iter(self._decision_cache))
+            self._decision_cache.pop(oldest)
+        self._decision_cache[key] = tool_calls
+
     def _build_messages(self) -> list[dict]:
-        """Build message list for the LLM call."""
+        """Build message list for the LLM call — optimized context."""
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-        # Add few-shot examples
-        messages.extend(FEW_SHOT_EXAMPLES)
-
-        # Add conversation history
-        history = self.state.get_recent_history(40)
+        # Add few-shot examples (only empty context, not after first iteration)
+        history = self.state.get_recent_history(30)
+        if len(history) <= 2:
+            messages.extend(FEW_SHOT_EXAMPLES)
         messages.extend(history)
 
-        # Inject current UI tree
-        ui_text = self.state.format_ui_tree_for_llm()
+        # Inject current UI tree — only when changed or no UI yet
+        ui_text = self.state.format_ui_tree_for_llm(prune=True)
+        ui_changed = not (self.state._prev_ui_hash and
+                         self.state.last_ui_hash == self.state._prev_ui_hash)
 
-        # Add screen recognition annotation
-        if self.state.ui_tree:
-            from agent.nlu.screen_recognizer import recognize_app, recognize_page_type
-            app = recognize_app(self.state.ui_tree)
-            page = recognize_page_type(self.state.ui_tree)
-            if app or page:
-                ui_text = f"[App: {app or '?'}] [Page: {page}]\n{ui_text}"
+        if ui_changed:
+            # Add app/page annotation
+            if self.state.ui_tree:
+                from agent.nlu.screen_recognizer import recognize_app, recognize_page_type
+                app = recognize_app(self.state.ui_tree)
+                page = recognize_page_type(self.state.ui_tree)
+                if app or page:
+                    ui_text = f"[App: {app or '?'}][Page: {page}]\n{ui_text}"
 
-        # Annotate if UI tree is unchanged from previous iteration
-        if self.state._prev_ui_hash and self.state.last_ui_hash == self.state._prev_ui_hash:
-            ui_text = "[Note: UI tree unchanged since last action.]\n" + ui_text
-
-        if not any(m.get("role") == "user" and "Current screen UI" in str(m.get("content", ""))
-                   for m in messages[-3:]):
             messages.append({
                 "role": "user",
-                "content": f"[Current screen UI state]:\n{ui_text}",
+                "content": f"[UI]:\n{ui_text}",
+            })
+        elif not any("UI unchanged" in str(m.get("content", "")) for m in messages[-1:]):
+            # UI unchanged — just add a note if actions failed
+            messages.append({
+                "role": "user",
+                "content": "[UI unchanged — previous actions may not have had effect. Try alternative.]",
             })
 
         # Trim to budget
