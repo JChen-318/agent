@@ -21,7 +21,7 @@ import com.androidagent.server.CommandHandler
 class AgentAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "${App.TAG}:Service"
-        const val PORT = 8765
+        const val PORT = 18765
         const val NOTIFICATION_CHANNEL_ID = "android_agent_service"
         const val NOTIFICATION_ID = 1001
 

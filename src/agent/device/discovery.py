@@ -14,7 +14,7 @@ from agent.device.adb import AdbManager, AdbDevice as AdbDev
 logger = logging.getLogger(__name__)
 
 SERVICE_TYPE = "_android-agent._tcp.local."
-DEFAULT_PORT = 8765
+DEFAULT_PORT = 18765
 TCP_SCAN_TIMEOUT = 0.5  # seconds per host
 TCP_SCAN_WORKERS = 40
 
@@ -110,7 +110,7 @@ class DeviceDiscovery(ServiceListener):
             if self._on_change:
                 self._on_change()
 
-    def adb_forward(self, serial: str, local_port: int = 8765) -> bool:
+    def adb_forward(self, serial: str, local_port: int = 18765) -> bool:
         """Set up ADB port forwarding for a device. Call before connecting."""
         if not self._adb:
             return False
@@ -127,7 +127,7 @@ class DeviceDiscovery(ServiceListener):
 
     def scan_network(self) -> list[dict]:
         """
-        TCP port scan the local subnet for devices on port 8765.
+        TCP port scan the local subnet for devices on port 18765.
         Returns list of discovered device dicts.
         """
         local_ip = _get_local_ip()

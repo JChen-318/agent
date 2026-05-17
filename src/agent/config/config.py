@@ -33,7 +33,7 @@ class LLMConfig(BaseModel):
 
 class DeviceConfig(BaseModel):
     host: str = "192.168.1.100"
-    port: int = 8765
+    port: int = 18765
     reconnect_interval: int = 5
     max_reconnect_attempts: int = 0
 
