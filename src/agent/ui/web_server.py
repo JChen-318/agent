@@ -16,6 +16,7 @@ from agent.core.loop import AgentLoop
 from agent.core.state import InteractionMode, SafetyLevel
 from agent.llm.client import LLMClient
 from agent.device.bridge import DeviceBridge
+from agent.device.discovery import DeviceDiscovery
 from agent.core.planner import Planner
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class AgentWebServer:
         self.llm: Optional[LLMClient] = None
         self.bridge: Optional[DeviceBridge] = None
         self.loop: Optional[AgentLoop] = None
+        self.discovery: Optional[DeviceDiscovery] = None
         self._ws_clients: list[WebSocket] = []
         self._device_connected = False
 
@@ -91,6 +93,29 @@ class AgentWebServer:
         self.loop.on_speak = lambda text: asyncio.ensure_future(
             self._broadcast({"type": "speak", "text": text})
         )
+
+        # Start mDNS device discovery
+        self._start_discovery()
+
+    def _start_discovery(self) -> None:
+        """Start mDNS discovery and broadcast new devices to UI."""
+        self.discovery = DeviceDiscovery(
+            on_change=lambda: asyncio.ensure_future(
+                self._broadcast({
+                    "type": "devices",
+                    "devices": [
+                        {"name": d.name, "display_name": d.display_name,
+                         "address": d.address, "port": d.port, "model": d.model}
+                        for d in self.discovery.devices
+                    ]
+                })
+            ) if asyncio.get_event_loop().is_running() else None
+        )
+        self.discovery.start()
+
+    def shutdown(self) -> None:
+        if self.discovery:
+            self.discovery.stop()
 
     async def _broadcast(self, data: dict) -> None:
         disconnected = []
@@ -180,14 +205,27 @@ class AgentWebServer:
             return {"status": "ok"}
 
         @app.post("/api/connect")
-        async def connect_device():
+        async def connect_device(data: dict = {}):
             if not self.bridge:
                 return JSONResponse({"error": "Agent not initialized"}, status_code=400)
+            host = data.get("host", self.config.device.host)
+            port = data.get("port", self.config.device.port)
+            if host != self.bridge.host or port != self.bridge.port:
+                self.bridge = DeviceBridge(
+                    host=host, port=port,
+                    reconnect_interval=self.config.device.reconnect_interval,
+                    max_reconnect_attempts=self.config.device.max_reconnect_attempts,
+                )
+                if self.loop:
+                    self.loop.device = self.bridge
+                    self.loop.executor._bridge = self.bridge
+                self.config.device.host = host
+                self.config.device.port = port
             try:
                 await self.bridge.connect()
                 self._device_connected = True
                 await self._broadcast({"type": "status", "device_connected": True})
-                return {"status": "ok", "message": "Connected"}
+                return {"status": "ok", "message": f"Connected to {host}:{port}"}
             except Exception as e:
                 self._device_connected = False
                 return {"status": "error", "message": str(e)}
@@ -199,6 +237,23 @@ class AgentWebServer:
             self._device_connected = False
             await self._broadcast({"type": "status", "device_connected": False})
             return {"status": "ok"}
+
+        @app.get("/api/devices")
+        async def list_devices():
+            if not self.discovery:
+                return {"devices": []}
+            return {
+                "devices": [
+                    {
+                        "name": d.name,
+                        "display_name": d.display_name,
+                        "address": d.address,
+                        "port": d.port,
+                        "model": d.model,
+                    }
+                    for d in self.discovery.devices
+                ]
+            }
 
         @app.post("/api/command")
         async def send_command(data: dict):
@@ -227,12 +282,32 @@ class AgentWebServer:
             await ws.accept()
             self._ws_clients.append(ws)
             await ws.send_json({"type": "connected"})
+            # Send current discovered devices
+            if self.discovery:
+                await ws.send_json({
+                    "type": "devices",
+                    "devices": [
+                        {"name": d.name, "display_name": d.display_name,
+                         "address": d.address, "port": d.port, "model": d.model}
+                        for d in self.discovery.devices
+                    ]
+                })
             try:
                 while True:
                     data = await ws.receive_json()
                     msg_type = data.get("type", "")
                     if msg_type == "ping":
                         await ws.send_json({"type": "pong"})
+                    elif msg_type == "scan":
+                        if self.discovery:
+                            await ws.send_json({
+                                "type": "devices",
+                                "devices": [
+                                    {"name": d.name, "display_name": d.display_name,
+                                     "address": d.address, "port": d.port, "model": d.model}
+                                    for d in self.discovery.devices
+                                ]
+                            })
                     elif msg_type == "command":
                         text = data.get("text", "").strip()
                         if text and self.loop and self._device_connected:

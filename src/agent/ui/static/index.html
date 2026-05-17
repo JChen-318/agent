@@ -139,6 +139,31 @@
   }
   nav .btn-row button.accent:hover { filter: brightness(1.1); }
 
+  nav .device-list {
+    margin: 4px 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  nav .device-item {
+    padding: 10px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: .15s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  nav .device-item:hover { border-color: var(--accent); background: var(--accent-dim); }
+  nav .device-item .dev-icon { font-size: 14px; flex-shrink: 0; }
+  nav .device-item .dev-info { flex: 1; min-width: 0; }
+  nav .device-item .dev-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  nav .device-item .dev-addr { font-size: 10px; color: var(--muted); }
+  nav .device-item.connected { border-color: var(--green); }
+  nav .scan-hint { font-size: 11px; color: var(--muted); text-align: center; padding: 8px; }
+
   /* ═══ Main ═══ */
   .main-area {
     flex: 1;
@@ -442,8 +467,12 @@
     </div>
   </div>
 
+  <div class="nav-section">Devices</div>
+  <div class="device-list" id="device-list">
+    <div class="scan-hint">Scanning network...</div>
+  </div>
   <div class="btn-row">
-    <button id="btn-connect" class="accent" onclick="toggleDevice()">Connect Device</button>
+    <button id="btn-connect" class="accent" onclick="toggleDevice()">Connect</button>
     <button onclick="toggleSettings()">Settings</button>
   </div>
 </nav>
@@ -513,6 +542,7 @@
 let ws = null;
 let deviceConnected = false;
 let agentRunning = false;
+let connectedAddr = '';
 
 function $(id) { return document.getElementById(id); }
 
@@ -534,6 +564,9 @@ function connectWS() {
           deviceConnected = data.device_connected;
           updateUI();
         }
+        break;
+      case 'devices':
+        updateDeviceList(data.devices || []);
         break;
       case 'command_sent':
         addMsg('command', data.text);
@@ -559,6 +592,57 @@ function connectWS() {
     addMsg('system', 'Disconnected — reconnecting…');
     setTimeout(connectWS, 3000);
   };
+}
+
+// ── Device List ────────────────────────────
+function updateDeviceList(devices) {
+  const list = $('device-list');
+  if (!devices || devices.length === 0) {
+    list.innerHTML = '<div class="scan-hint">No devices found — ensure phone is on same WiFi</div>';
+    return;
+  }
+  list.innerHTML = devices.map(d => {
+    const isConnected = connectedAddr === d.address + ':' + d.port;
+    return `<div class="device-item${isConnected ? ' connected' : ''}"
+      onclick="connectTo('${d.address}',${d.port})" title="Click to connect">
+      <span class="dev-icon">📱</span>
+      <div class="dev-info">
+        <div class="dev-name">${esc(d.display_name || d.name)}</div>
+        <div class="dev-addr">${esc(d.address)}:${d.port}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function connectTo(host, port) {
+  if (deviceConnected) {
+    // Disconnect first
+    await fetch('/api/disconnect', { method: 'POST' });
+    deviceConnected = false;
+    connectedAddr = '';
+    updateUI();
+  }
+  addMsg('system', `Connecting to ${host}:${port}...`);
+  try {
+    const r = await fetch('/api/connect', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ host, port }),
+    });
+    const j = await r.json();
+    if (j.status === 'ok') {
+      deviceConnected = true;
+      connectedAddr = host + ':' + port;
+      updateUI();
+    }
+    addMsg('system', j.message || j.status);
+  } catch(e) {
+    addMsg('error', 'Connection failed: ' + e.message);
+  }
 }
 
 // ── Messages ───────────────────────────────
@@ -661,18 +745,23 @@ async function saveConfig() {
 }
 
 async function toggleDevice() {
-  const endpoint = deviceConnected ? '/api/disconnect' : '/api/connect';
-  try {
-    const r = await fetch(endpoint, { method: 'POST' });
-    const j = await r.json();
-    if (j.status === 'ok') {
-      deviceConnected = !deviceConnected;
-      updateUI();
+  if (deviceConnected) {
+    try {
+      const r = await fetch('/api/disconnect', { method: 'POST' });
+      const j = await r.json();
+      if (j.status === 'ok') {
+        deviceConnected = false;
+        connectedAddr = '';
+        updateUI();
+      }
+      addMsg('system', j.message || j.status);
+    } catch(e) {
+      addMsg('error', 'Failed: ' + e.message);
     }
-    addMsg('system', j.message || j.status);
-  } catch(e) {
-    addMsg('error', 'Failed: ' + e.message);
+    return;
   }
+  // Not connected — open settings for manual config
+  toggleSettings();
 }
 
 // ── Init ───────────────────────────────────

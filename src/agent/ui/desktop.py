@@ -29,6 +29,9 @@ def run_desktop(app, host: str = "127.0.0.1", port: int = 8080) -> None:
         web, {"type": "speak", "text": text}
     )
 
+    # Start mDNS device discovery
+    web._start_discovery()
+
     # Start uvicorn in a daemon thread
     server_url = f"http://{host}:{port}"
 

@@ -7,6 +7,9 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -30,6 +33,8 @@ class AgentAccessibilityService : AccessibilityService() {
     lateinit var gestureExecutor: GestureExecutor
     lateinit var uiTreeCapturer: UiTreeCapturer
     private var webSocketServer: AgentWebSocketServer? = null
+    private var nsdManager: NsdManager? = null
+    private var nsdRegistered = false
 
     override fun onCreate() {
         super.onCreate()
@@ -51,6 +56,7 @@ class AgentAccessibilityService : AccessibilityService() {
         try {
             webSocketServer?.start()
             Log.i(TAG, "WebSocket server started on port $PORT")
+            registerNsd()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start WebSocket server: ${e.message}", e)
         }
@@ -66,6 +72,7 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        unregisterNsd()
         webSocketServer?.stop()
         instance = null
         Log.i(TAG, "Accessibility service unbound")
@@ -73,6 +80,7 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        unregisterNsd()
         webSocketServer?.stop()
         instance = null
         super.onDestroy()
@@ -81,6 +89,42 @@ class AgentAccessibilityService : AccessibilityService() {
     fun captureScreenshot(): Bitmap? {
         // TODO: implement via MediaProjection for API < 34
         return null
+    }
+
+    private fun registerNsd() {
+        nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
+        val serviceInfo = NsdServiceInfo().apply {
+            serviceName = "AndroidAgent-${Build.MODEL.replace(" ", "-")}"
+            serviceType = "_android-agent._tcp"
+            port = PORT
+        }
+        nsdManager?.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, object : NsdManager.RegistrationListener {
+            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {
+                Log.e(TAG, "NSD registration failed: $errorCode")
+                nsdRegistered = false
+            }
+            override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {}
+            override fun onServiceRegistered(serviceInfo: NsdServiceInfo?) {
+                Log.i(TAG, "NSD registered: ${serviceInfo?.serviceName}")
+                nsdRegistered = true
+            }
+            override fun onServiceUnregistered(serviceInfo: NsdServiceInfo?) {
+                Log.i(TAG, "NSD unregistered")
+                nsdRegistered = false
+            }
+        })
+    }
+
+    private fun unregisterNsd() {
+        if (nsdRegistered && nsdManager != null) {
+            nsdManager?.unregisterService(object : NsdManager.RegistrationListener {
+                override fun onServiceUnregistered(serviceInfo: NsdServiceInfo?) {}
+                override fun onRegistrationFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {}
+                override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {}
+                override fun onServiceRegistered(serviceInfo: NsdServiceInfo?) {}
+            })
+            nsdRegistered = false
+        }
     }
 
     private fun startForeground() {
