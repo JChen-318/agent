@@ -126,12 +126,12 @@ class AgentLoop:
                 logger.warning("Voice input failed, falling back to text input.")
 
         import sys
-        if sys.stdin.isatty():
-            try:
+        try:
+            if sys.stdin and sys.stdin.isatty():
                 text = input(">>> ").strip()
                 return text if text else None
-            except (EOFError, KeyboardInterrupt):
-                return None
+        except (EOFError, KeyboardInterrupt, AttributeError):
+            return None
         return None
 
     def _should_use_planning(self, user_input: str) -> bool:
@@ -148,10 +148,14 @@ class AgentLoop:
 
     async def process_text_input(self, text: str) -> LLMResponse:
         """Public API: process a text command directly. Returns final LLM response."""
-        if self._should_use_planning(text):
-            await self._run_with_plan(text)
-        else:
-            await self._process_request(text)
+        self.running = True
+        try:
+            if self._should_use_planning(text):
+                await self._run_with_plan(text)
+            else:
+                await self._process_request(text)
+        finally:
+            self.running = False
         for msg in reversed(self.state.messages):
             if msg["role"] == "assistant":
                 return LLMResponse(content=msg.get("content"))
@@ -180,7 +184,7 @@ class AgentLoop:
             })
 
             progress = self.planner.format_plan_progress(plan, task)
-            self.state.add_message("system", progress)
+            self.state.add_message("user", progress)
             logger.info(f"Sub-task [{task.id}]: {task.description}")
 
             try:
@@ -238,10 +242,16 @@ class AgentLoop:
             messages = self._build_messages()
 
             # 3. Call LLM
+            logger.info(f"Calling LLM ({len(messages)} messages)...")
             response = await self.llm.chat(
                 messages=messages,
                 tools=TOOL_DEFINITIONS,
                 tool_choice="auto",
+            )
+            logger.info(
+                f"LLM response: content={bool(response.content)} "
+                f"tool_calls={len(response.tool_calls)} "
+                f"finish={response.finish_reason}"
             )
 
             # 4. Process response
@@ -295,15 +305,18 @@ class AgentLoop:
                     # Confirmation check
                     if self.state.needs_confirmation(action, args):
                         logger.info(f"Confirmation needed for: {action}({args})")
-                        print(f"\n[CONFIRM] {action}: {args}")
-                        resp = input("Proceed? (y/N): ").strip().lower()
-                        if resp != "y":
-                            self.state.add_message(
-                                "tool",
-                                {"error": "Cancelled by user", "cancelled": True},
-                                tool_call_id=tool_call.id,
-                            )
-                            continue
+                        try:
+                            print(f"\n[CONFIRM] {action}: {args}")
+                            resp = input("Proceed? (y/N): ").strip().lower()
+                            if resp != "y":
+                                self.state.add_message(
+                                    "tool",
+                                    {"error": "Cancelled by user", "cancelled": True},
+                                    tool_call_id=tool_call.id,
+                                )
+                                continue
+                        except EOFError:
+                            pass  # Non-interactive mode: auto-confirm
 
                     # Anti-detection: coordinate jitter
                     if action in ("click", "long_press", "swipe"):

@@ -23,3 +23,6 @@ android-service/local.properties
 # Env
 .env
 *.exe
+platform-tools/
+# Desktop app
+*.log

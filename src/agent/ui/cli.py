@@ -11,6 +11,7 @@ from agent.core.loop import AgentLoop
 from agent.core.state import InteractionMode, SafetyLevel
 from agent.llm.client import LLMClient
 from agent.device.bridge import DeviceBridge
+from agent.device.adb import AdbManager
 from agent.speech.transcriber import Transcriber
 from agent.speech.tts import TTSEngine
 
@@ -33,13 +34,66 @@ class AgentApp:
 
     def _setup_logging(self) -> None:
         level = getattr(logging, self.config.logging.level.upper(), logging.INFO)
+        handlers = []
+        # Stream handler — skip if stderr is unavailable (console=False exe)
+        if sys.stderr and hasattr(sys.stderr, "write"):
+            try:
+                handlers.append(logging.StreamHandler(sys.stderr))
+            except Exception:
+                pass
+        # Always log to file when running as bundled exe (no console)
+        if getattr(sys, "frozen", False):
+            import os as _os
+            _log_dir = _os.path.dirname(sys.executable)
+            _log_path = _os.path.join(_log_dir, "android-agent.log")
+            try:
+                handlers.append(logging.FileHandler(_log_path, encoding="utf-8"))
+            except Exception:
+                pass
+        if not handlers:
+            handlers.append(logging.NullHandler())
         logging.basicConfig(
             level=level,
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%H:%M:%S",
+            handlers=handlers,
         )
 
-    def init(self, skip_voice: bool = False) -> None:
+    def _auto_detect_usb(self) -> None:
+        """Auto-detect USB-connected Android device via ADB and set up port forwarding."""
+        self._adb = AdbManager()
+        if not self._adb.available:
+            logger.debug("ADB not found, skipping USB auto-detection")
+            return
+
+        devices = self._adb.list_devices()
+        if not devices:
+            logger.debug("No ADB devices found")
+            return
+
+        # Pick the first USB device in 'device' state
+        for d in devices:
+            if d.state == "device" and d.is_usb:
+                info = self._adb.get_device_info(d.serial)
+                logger.info(
+                    f"USB device found: {info.get('model', d.serial)} "
+                    f"(Android {info.get('android_version', '?')})"
+                )
+                local_port = self.config.device.port
+                ok = self._adb.forward_port(d.serial, local_port=local_port)
+                if ok:
+                    self.bridge.host = "127.0.0.1"
+                    self.bridge.port = local_port
+                    self.config.device.host = "127.0.0.1"
+                    self.config.device.port = local_port
+                    logger.info(f"ADB forwarding: 127.0.0.1:{local_port} → device:{local_port}")
+                else:
+                    logger.warning("ADB port forwarding failed, falling back to configured host/port")
+                return
+
+        logger.debug("No usable USB device found (state must be 'device')")
+
+    def init(self, skip_voice: bool = False, skip_auto_usb: bool = False) -> None:
         """Initialize all components."""
         # LLM client
         self.llm = LLMClient(
@@ -55,6 +109,12 @@ class AgentApp:
             fallback_api_key=self.config.llm.fallback_api_key,
             fallback_model=self.config.llm.fallback_model,
         )
+        logger.info(
+            "LLM configured: base_url=%s model=%s api_key=%s",
+            self.config.llm.base_url,
+            self.config.llm.model,
+            ("set" if self.config.llm.api_key else "NOT SET"),
+        )
 
         # Device bridge
         self.bridge = DeviceBridge(
@@ -63,6 +123,10 @@ class AgentApp:
             reconnect_interval=self.config.device.reconnect_interval,
             max_reconnect_attempts=self.config.device.max_reconnect_attempts,
         )
+
+        self._adb: Optional[AdbManager] = None
+        if not skip_auto_usb:
+            self._auto_detect_usb()
 
         # Whisper transcriber (optional)
         if not skip_voice:
@@ -126,7 +190,7 @@ class AgentApp:
 ╚══════════════════════════════════════════╝
 """)
         print(f"Mode: {self.config.interaction.mode}")
-        print(f"Device: {self.config.device.host}:{self.config.device.port}")
+        print(f"Device: {self.bridge.host if self.bridge else self.config.device.host}:{self.bridge.port if self.bridge else self.config.device.port}")
         print(f"LLM: {self.config.llm.model}")
         if self.transcriber:
             print(f"Voice: Whisper {self.config.whisper.model_size}")
@@ -144,10 +208,12 @@ class AgentApp:
         except ConnectionError as e:
             print(f"\nFailed to connect to device: {e}")
             print("Make sure the Android APK is installed and the accessibility service is enabled.")
-            print(f"Expected device at: {self.config.device.host}:{self.config.device.port}")
+            print(f"Expected device at: {self.bridge.host if self.bridge else self.config.device.host}:{self.bridge.port if self.bridge else self.config.device.port}")
         finally:
             if self.loop is not None:
                 await self.loop.device.disconnect()
+            if self._adb:
+                self._adb.remove_all_forwards()
             print("Agent stopped.")
 
 
@@ -189,7 +255,8 @@ def main() -> None:
         app.config.llm.model = args.model
 
     skip_voice = (args.web or args.desktop) and not args.voice
-    app.init(skip_voice=skip_voice)
+    skip_auto_usb = bool(args.host or args.port)
+    app.init(skip_voice=skip_voice, skip_auto_usb=skip_auto_usb)
 
     if args.desktop:
         _run_desktop(app, host=args.web_host, port=args.web_port)

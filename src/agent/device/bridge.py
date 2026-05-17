@@ -59,7 +59,7 @@ class DeviceBridge:
         while True:
             try:
                 self.ws = await websockets.connect(
-                    url, ping_interval=30, ping_timeout=10, max_size=10 * 1024 * 1024
+                    url, ping_interval=None, max_size=10 * 1024 * 1024
                 )
                 self.connected = True
                 logger.info(f"Connected to device at {url}")
@@ -79,7 +79,8 @@ class DeviceBridge:
     async def send_command(self, cmd: Command, timeout: float = 30.0) -> CommandResponse:
         """Send a command and wait for matching response."""
         if not self.ws or not self.connected:
-            raise ConnectionError("Not connected to device")
+            await self.disconnect()
+            await self.connect()
 
         payload = serialize_command(cmd)
         logger.debug(f"Sending: {payload}")
@@ -88,6 +89,9 @@ class DeviceBridge:
             await asyncio.wait_for(self.ws.send(payload), timeout=timeout)
         except asyncio.TimeoutError:
             raise TimeoutError(f"Timed out sending command {cmd.id}")
+        except websockets.ConnectionClosed as e:
+            self.connected = False
+            raise ConnectionError(f"Connection closed during send: {e}")
 
         # Wait for matching response
         try:
@@ -95,6 +99,7 @@ class DeviceBridge:
                 data = json.loads(raw)
                 resp = CommandResponse.from_dict(data)
                 if resp.id == cmd.id:
+                    self.connected = False  # Phone server closes after each response
                     return resp
                 elif data.get("type") == "event":
                     self._dispatch_event(data)
@@ -157,7 +162,7 @@ class DeviceBridge:
                         del self._action_cache[oldest]
                     self._action_cache[cache_key] = {"result": result, "_ts": time.time()}
                 return result
-            except (ConnectionError, TimeoutError) as e:
+            except (ConnectionError, TimeoutError, websockets.ConnectionClosed) as e:
                 last_result = {
                     "status": "error",
                     "data": {},
@@ -171,6 +176,12 @@ class DeviceBridge:
                         f"retrying in {delay:.1f}s: {e}"
                     )
                     await asyncio.sleep(delay)
+                    # Reconnect before retry
+                    try:
+                        await self.disconnect()
+                        await self.connect()
+                    except Exception as ce:
+                        logger.warning(f"Reconnect failed: {ce}")
                 else:
                     return last_result
 

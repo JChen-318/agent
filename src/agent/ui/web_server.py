@@ -46,6 +46,7 @@ class AgentWebServer:
         self.discovery: Optional[DeviceDiscovery] = None
         self._ws_clients: list[WebSocket] = []
         self._device_connected = False
+        self._pending_broadcasts: list[dict] = []
 
         self.app = FastAPI(title="Android Agent", version="0.1.0")
         self._setup_routes()
@@ -116,21 +117,36 @@ class AgentWebServer:
                     "android_version": info.get("android_version", ""),
                     "type": "usb",
                 })
-            asyncio.ensure_future(
-                self._broadcast({
-                    "type": "devices",
-                    "devices": [
-                        {"name": d.name, "display_name": d.display_name,
-                         "address": d.address, "port": d.port, "model": d.model, "type": "wifi"}
-                        for d in self.discovery.devices
-                    ],
-                    "usb_devices": usb_list,
-                    "adb_available": self.discovery.adb_available,
-                })
-            )
+            data = {
+                "type": "devices",
+                "devices": [
+                    {"name": d.name, "display_name": d.display_name,
+                     "address": d.address, "port": d.port, "model": d.model, "type": "wifi"}
+                    for d in self.discovery.devices
+                ],
+                "usb_devices": usb_list,
+                "adb_available": self.discovery.adb_available,
+            }
+            self._schedule_broadcast(data)
 
         self.discovery = DeviceDiscovery(on_change=_on_device_change)
         self.discovery.start()
+
+    def _schedule_broadcast(self, data: dict) -> None:
+        """Schedule a broadcast from a non-async context (thread-safe)."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._broadcast(data))
+        except RuntimeError:
+            # Called from a thread without a running event loop — queue for later
+            self._pending_broadcasts.append(data)
+
+    def _flush_broadcasts(self) -> None:
+        """Send any queued broadcasts (called from the main event loop)."""
+        pending = self._pending_broadcasts[:]
+        self._pending_broadcasts.clear()
+        for data in pending:
+            asyncio.ensure_future(self._broadcast(data))
 
     def shutdown(self) -> None:
         if self.discovery:
@@ -303,7 +319,7 @@ class AgentWebServer:
             if not self.discovery or not self.discovery._adb:
                 return {"status": "error", "message": "ADB not available"}
             serial = data.get("serial", "")
-            local_port = data.get("local_port", 8765)
+            local_port = data.get("local_port", 18765)
             if not serial:
                 return {"status": "error", "message": "Serial required"}
             ok = self.discovery.adb_forward(serial, local_port)
@@ -339,6 +355,8 @@ class AgentWebServer:
             await ws.accept()
             self._ws_clients.append(ws)
             await ws.send_json({"type": "connected"})
+            # Flush any queued broadcasts
+            self._flush_broadcasts()
             # Send current discovered devices
             if self.discovery:
                 usb_list = []

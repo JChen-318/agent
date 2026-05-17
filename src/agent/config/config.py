@@ -100,10 +100,29 @@ def _resolve_dict(d: dict) -> dict:
     return d
 
 
+def _exe_config_path() -> Optional[Path]:
+    """Check for a user config.yaml next to the EXE (frozen) or in CWD (dev)."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).parent / "config.yaml")
+    candidates.append(Path.cwd() / "config.yaml")
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
 def load_config(config_path: Optional[str] = None) -> AppConfig:
-    """Load configuration from YAML file, with env var interpolation."""
+    """Load configuration from YAML file, with env var interpolation.
+
+    Priority: explicit path > config.yaml next to EXE > bundled default.yaml
+    """
     if config_path is None:
-        config_path = _data_dir() / "config" / "default.yaml"
+        user_path = _exe_config_path()
+        if user_path:
+            config_path = str(user_path)
+        else:
+            config_path = str(_data_dir() / "config" / "default.yaml")
 
     with open(config_path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)

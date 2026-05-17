@@ -1,4 +1,4 @@
-name: Build Agent (Windows/macOS)
+name: Build Agent (Windows EXE)
 
 on:
   push:
@@ -19,35 +19,14 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install -e ".[tts]" pyinstaller
+        run: |
+          pip install pyinstaller pyyaml pydantic pydantic-settings openai websockets uvicorn rich python-dotenv sounddevice numpy faster-whisper pywebview zeroconf ifaddr cryptography httpx
 
-      - name: Build Windows executable
-        run: pyinstaller android-agent.spec --noconfirm
+      - name: Build Windows EXE
+        run: pyinstaller agent-desktop.spec --noconfirm
 
-      - name: Upload Windows exe
+      - name: Upload EXE folder
         uses: actions/upload-artifact@v4
         with:
-          name: android-agent-windows
-          path: dist/android-agent.exe
-
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install -e ".[tts]" pyinstaller
-
-      - name: Build macOS executable
-        run: pyinstaller android-agent.spec --noconfirm
-
-      - name: Upload macOS binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-agent-macos
-          path: dist/android-agent
+          name: AndroidAgent
+          path: dist/AndroidAgent/

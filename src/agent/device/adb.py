@@ -23,6 +23,9 @@ if sys.platform == "win32":
         str(Path(os.environ.get("ANDROID_SDK_ROOT", "")) / "platform-tools" / "adb.exe"),
         "C:\\platform-tools\\adb.exe",
         "C:\\adb\\adb.exe",
+        # Common download/extract locations
+        str(Path.home() / "Downloads" / "platform-tools-latest-windows" / "platform-tools" / "adb.exe"),
+        str(Path.home() / "Downloads" / "platform-tools" / "adb.exe"),
     ])
 else:
     _ADB_PATHS.extend([
@@ -32,8 +35,8 @@ else:
         "/usr/local/bin/adb",
     ])
 
-DEFAULT_REMOTE_PORT = 8765
-DEFAULT_LOCAL_PORT = 8765
+DEFAULT_REMOTE_PORT = 18765
+DEFAULT_LOCAL_PORT = 18765
 
 
 class AdbDevice:

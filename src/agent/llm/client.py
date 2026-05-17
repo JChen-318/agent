@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import random
+import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -98,8 +100,14 @@ class LLMClient:
                             arguments=args,
                         ))
 
+                # Parse XML-format tool calls from content (for models without native tool calling)
+                content = msg.content
+                if content and "<tool_call>" in content:
+                    xml_tool_calls, content = _extract_xml_tool_calls(content)
+                    tool_calls.extend(xml_tool_calls)
+
                 return LLMResponse(
-                    content=msg.content,
+                    content=content,
                     tool_calls=tool_calls,
                     finish_reason=choice.finish_reason or "stop",
                 )
@@ -141,8 +149,14 @@ class LLMClient:
                             arguments=args,
                         ))
 
+                # Parse XML-format tool calls from content (for models without native tool calling)
+                content = msg.content
+                if content and "<tool_call>" in content:
+                    xml_tool_calls, content = _extract_xml_tool_calls(content)
+                    tool_calls.extend(xml_tool_calls)
+
                 return LLMResponse(
-                    content=msg.content,
+                    content=content,
                     tool_calls=tool_calls,
                     finish_reason=choice.finish_reason or "stop",
                 )
@@ -162,3 +176,65 @@ class LLMClient:
 
         resp = await self.client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
+
+
+def _extract_xml_tool_calls(content: str) -> tuple[list[ToolCall], str]:
+    """Extract XML-format tool calls from text content.
+
+    Handles:
+      <tool_call>
+      function=screenshot
+      </tool_call>
+
+    And:
+      <tool_call>{"name": "screenshot"}</tool_call>
+    """
+    tool_calls = []
+    pattern = r"<tool_call>\s*(.*?)\s*</tool_call>"
+
+    def replace_tool_call(match):
+        body = match.group(1).strip()
+
+        # Try JSON format first
+        if body.startswith("{"):
+            try:
+                data = json.loads(body)
+                name = data.get("name") or data.get("function") or ""
+                args = data.get("arguments") or data.get("args") or data.get("parameters") or {}
+                if name:
+                    tool_calls.append(ToolCall(
+                        id=f"xml_{uuid.uuid4().hex[:8]}",
+                        name=name.strip(),
+                        arguments=args if isinstance(args, dict) else {},
+                    ))
+                return ""
+            except json.JSONDecodeError:
+                pass
+
+        # Try function=NAME format
+        func_match = re.search(r"function\s*=\s*(\S+)", body)
+        if func_match:
+            func_name = func_match.group(1).rstrip(">")
+            tool_calls.append(ToolCall(
+                id=f"xml_{uuid.uuid4().hex[:8]}",
+                name=func_name.strip(),
+                arguments={},
+            ))
+            return ""
+
+        # Try <function>NAME</function> format
+        func_match = re.search(r"<function>\s*(.*?)\s*</function>", body, re.DOTALL)
+        if func_match:
+            tool_calls.append(ToolCall(
+                id=f"xml_{uuid.uuid4().hex[:8]}",
+                name=func_match.group(1).strip(),
+                arguments={},
+            ))
+            return ""
+
+        return ""
+
+    cleaned = re.sub(pattern, replace_tool_call, content, flags=re.DOTALL)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    return tool_calls, cleaned
