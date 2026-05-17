@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Android Agent</string>
+    <string name="accessibility_service_description">Android Agent accessibility service for automated phone control</string>
+    <string name="foreground_notification_title">Android Agent Running</string>
+    <string name="foreground_notification_text">WebSocket server active on port 8765</string>
+</resources>

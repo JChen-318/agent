@@ -1,0 +1,40 @@
+# Default configuration for android-agent
+
+llm:
+  base_url: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+  api_key: "${OPENAI_API_KEY}"
+  model: "${LLM_MODEL:-gpt-4o}"
+  max_tokens: 4096
+  temperature: 0.0
+
+device:
+  host: "${DEVICE_HOST:-192.168.1.100}"
+  port: "${DEVICE_PORT:-8765}"
+  reconnect_interval: 5
+  max_reconnect_attempts: 0  # 0 = infinite
+
+whisper:
+  model_size: "${WHISPER_MODEL_SIZE:-small}"
+  device: "${WHISPER_DEVICE:-cpu}"
+  compute_type: "${WHISPER_COMPUTE_TYPE:-int8}"
+  sample_rate: 16000
+  use_vad: true
+  vad_silence_threshold_ms: 1500
+
+interaction:
+  mode: "${INTERACTION_MODE:-single_command}"  # single_command or continuous
+
+safety:
+  confirmation_level: "${CONFIRMATION_LEVEL:-sensitive}"  # none, sensitive, all
+  blocked_patterns:
+    - password
+    - credit.card
+    - cvv
+    - ssn
+    - 验证码  # verification code
+
+tts:
+  enabled: "${ENABLE_TTS:-false}"
+
+logging:
+  level: "${LOG_LEVEL:-INFO}"
