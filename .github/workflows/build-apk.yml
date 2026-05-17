@@ -3,12 +3,8 @@ name: Build Android APK
 on:
   push:
     branches: [main]
-    paths:
-      - 'android-service/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'android-service/**'
   workflow_dispatch:
 
 jobs:
