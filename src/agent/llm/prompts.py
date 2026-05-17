@@ -27,6 +27,18 @@ The UI tree shows the hierarchy of interactive elements on the current screen. E
 - **Be patient**: apps may need time to load; use wait() as needed.
 - **Complete the task**: do not stop until the user's full request is satisfied.
 
+## Common App Package Names
+# When using launch_app(), use these package names:
+# com.tencent.mm (WeChat/微信) | com.ss.android.ugc.aweme (TikTok/抖音)
+# com.tencent.mobileqq (QQ) | com.taobao.taobao (Taobao/淘宝)
+# com.sina.weibo (Weibo/微博) | com.eg.android.AlipayGphone (Alipay/支付宝)
+# com.sankuai.meituan (Meituan/美团) | com.jingdong.app.mall (JD/京东)
+# com.android.settings (Settings/设置) | com.android.deskclock (Clock/时钟)
+# com.autonavi.minimap (Amap/高德地图) | com.baidu.BaiduMap (Baidu Map/百度地图)
+# tv.danmaku.bili (Bilibili/哔哩哔哩) | com.netease.cloudmusic (NetEase Music/网易云音乐)
+# com.alibaba.android.rimet (DingTalk/钉钉) | com.xunmeng.pinduoduo (Pinduoduo/拼多多)
+# com.android.calendar (Calendar/日历) | com.xingin.xhs (Xiaohongshu/小红书)
+
 ## Safety Rules
 - NEVER type or handle passwords, credit card numbers, or verification codes.
 - If a task involves payments or financial transactions, call ask_user() first.
@@ -46,29 +58,52 @@ FEW_SHOT_EXAMPLES = [
         "role": "assistant",
         "content": None,
         "tool_calls": [
-            {"function": {"name": "launch_app", "arguments": {"package_name": "com.tencent.mm"}}},
+            {
+                "id": "call_example_1",
+                "type": "function",
+                "function": {
+                    "name": "launch_app",
+                    "arguments": '{"package_name": "com.tencent.mm"}',
+                },
+            },
         ],
     },
     {
         "role": "tool",
-        "content": {"status": "ok", "data": {}},
+        "tool_call_id": "call_example_1",
+        "content": '{"status": "ok", "data": {}}',
     },
     {
         "role": "assistant",
         "content": None,
         "tool_calls": [
-            {"function": {"name": "wait", "arguments": {"duration_ms": 2000}}},
+            {
+                "id": "call_example_2",
+                "type": "function",
+                "function": {
+                    "name": "wait",
+                    "arguments": '{"duration_ms": 2000}',
+                },
+            },
         ],
     },
     {
         "role": "tool",
-        "content": {"status": "ok"},
+        "tool_call_id": "call_example_2",
+        "content": '{"status": "ok"}',
     },
     {
         "role": "assistant",
         "content": None,
         "tool_calls": [
-            {"function": {"name": "task_complete", "arguments": {"summary": "微信已打开"}}},
+            {
+                "id": "call_example_3",
+                "type": "function",
+                "function": {
+                    "name": "task_complete",
+                    "arguments": '{"summary": "微信已打开"}',
+                },
+            },
         ],
     },
 ]

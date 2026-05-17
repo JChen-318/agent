@@ -20,7 +20,7 @@ class AgentWebSocketServer(
     }
 
     private val gson = Gson()
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.IO.limitedParallelism(1) + SupervisorJob())
 
     override fun openWebSocket(handshake: IHTTPSession): WebSocket {
         return AgentWebSocket(handshake)
@@ -50,7 +50,14 @@ class AgentWebSocketServer(
                     send(json)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error processing message", e)
-                    val err = CommandResponse.error("unknown", "Parse error: ${e.message}")
+                    // Try to extract the command id from the raw message for traceability
+                    val cmdId = try {
+                        gson.fromJson(raw, com.google.gson.JsonObject::class.java)
+                            ?.get("id")?.asString ?: "unknown"
+                    } catch (_: Exception) {
+                        "unknown"
+                    }
+                    val err = CommandResponse.error(cmdId, "Parse error: ${e.message}")
                     send(gson.toJson(err))
                 }
             }

@@ -46,12 +46,12 @@ class CommandHandler(private val service: AgentAccessibilityService) {
     private fun handleClickByText(cmd: Command): CommandResponse {
         val text = cmd.args["text"] as? String ?: return badArg(cmd, "text")
         val instance = (cmd.args["instance"] as? Number)?.toInt() ?: 0
-        val point = service.uiTreeCapturer.findNodeByText(text)
+        val point = service.uiTreeCapturer.findNodeByText(text, instance)
         return if (point != null) {
             service.gestureExecutor.click(point.first, point.second)
-            CommandResponse.ok(cmd.id, mapOf("text" to text, "x" to point.first, "y" to point.second))
+            CommandResponse.ok(cmd.id, mapOf("text" to text, "instance" to instance, "x" to point.first, "y" to point.second))
         } else {
-            CommandResponse.error(cmd.id, "No element found with text: $text")
+            CommandResponse.error(cmd.id, "No element found at instance $instance with text: $text")
         }
     }
 
@@ -84,6 +84,9 @@ class CommandHandler(private val service: AgentAccessibilityService) {
                 "forward" -> service.gestureExecutor.scrollForward()
                 "backward" -> service.gestureExecutor.scrollBackward()
                 else -> {}
+            }
+            if (steps > 1) {
+                Thread.sleep(200)  // Allow UI to settle between scroll steps
             }
         }
         return CommandResponse.ok(cmd.id, mapOf("direction" to direction, "steps" to steps))

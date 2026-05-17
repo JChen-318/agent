@@ -4,9 +4,12 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from agent.device.protocol import UIElement
+
+if TYPE_CHECKING:
+    from agent.core.planner import TaskPlan, SubTask
 
 
 class InteractionMode(StrEnum):
@@ -48,6 +51,12 @@ class GlobalState:
     last_screenshot: Optional[str] = None
     focused_window: Optional[str] = None
     last_ui_hash: Optional[str] = None
+    _prev_ui_hash: Optional[str] = None
+
+    # Task planning
+    current_plan: Optional[object] = None  # TaskPlan | None
+    current_task: Optional[object] = None  # SubTask | None
+    task_results: list[dict] = field(default_factory=list)
 
     # Metrics
     iteration_count: int = 0
@@ -69,13 +78,16 @@ class GlobalState:
 
         self.messages.append(msg)
 
-    def get_recent_history(self, n: int = 20) -> list[dict]:
-        """Get last N messages from history."""
-        return self.messages[-n * 2:] if len(self.messages) > n * 2 else self.messages.copy()
+    def get_recent_history(self, n: int = 40) -> list[dict]:
+        """Get the last N messages from conversation history."""
+        if len(self.messages) <= n:
+            return self.messages.copy()
+        return self.messages[-n:]
 
     def update_device_state(self, ui_tree_raw: dict) -> None:
         """Update the stored device state from raw UI tree dict."""
         self.ui_tree_raw = ui_tree_raw
+        self._prev_ui_hash = self.last_ui_hash
         if ui_tree_raw:
             self.ui_tree = UIElement.from_dict(ui_tree_raw)
         self.iteration_count += 1
@@ -153,8 +165,17 @@ class GlobalState:
                     return f"Blocked: input text matches sensitive pattern '{pattern}'"
         return None
 
+    def reset_iteration(self) -> None:
+        """Reset only iteration counter (between sub-tasks, preserving history)."""
+        self.iteration_count = 0
+        self._prev_ui_hash = None
+
     def reset(self) -> None:
         """Reset state for a new command."""
         self.messages.clear()
         self.iteration_count = 0
         self.last_ui_hash = None
+        self._prev_ui_hash = None
+        self.current_plan = None
+        self.current_task = None
+        self.task_results.clear()

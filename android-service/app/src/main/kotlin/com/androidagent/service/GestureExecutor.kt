@@ -54,9 +54,8 @@ class GestureExecutor(private val service: AccessibilityService) {
     fun typeText(text: String, clearFirst: Boolean = true): Boolean {
         val root = service.rootInActiveWindow ?: return false
 
-        // Find focused editable node
+        // Find focused editable node (child must be used before parent is recycled)
         val focused = findFocusedEditable(root)
-        root.recycle()
 
         if (focused != null) {
             if (clearFirst) {
@@ -72,9 +71,11 @@ class GestureExecutor(private val service: AccessibilityService) {
             clipboard.setPrimaryClip(clip)
             focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             focused.recycle()
+            root.recycle()
             return true
         }
 
+        root.recycle()
         return false
     }
 

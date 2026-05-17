@@ -67,3 +67,28 @@ class Planner:
             if deps_met:
                 return task
         return None
+
+    def format_plan_progress(self, plan: TaskPlan, current_task: SubTask | None = None) -> str:
+        """Format plan progress as text for LLM context injection."""
+        status_icon = {
+            "pending": "[ ]",
+            "in_progress": "[>]",
+            "completed": "[OK]",
+            "failed": "[X]",
+        }
+        lines = ["## Task Plan", f"Goal: {plan.goal}", ""]
+        for st in plan.sub_tasks:
+            icon = status_icon.get(st.status, "[?]")
+            lines.append(f"  {icon} {st.description}")
+        if current_task:
+            lines.append(f"\nNow executing: {current_task.description}")
+            lines.append("Complete this sub-task, then call task_complete().")
+        return "\n".join(lines)
+
+    def mark_completed(self, task: SubTask) -> None:
+        """Mark a sub-task as successfully completed."""
+        task.status = "completed"
+
+    def mark_failed(self, task: SubTask, reason: str = "") -> None:
+        """Mark a sub-task as failed with an optional reason."""
+        task.status = "failed"

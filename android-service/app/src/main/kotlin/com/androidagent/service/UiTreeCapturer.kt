@@ -25,10 +25,9 @@ class UiTreeCapturer(private val service: AccessibilityService) {
         }
     }
 
-    fun findNodeByText(text: String): Pair<Int, Int>? {
+    fun findNodeByText(text: String, instance: Int = 0): Pair<Int, Int>? {
         val root = service.rootInActiveWindow ?: return null
-        val node = findByText(root, text)
-        root.recycle()
+        val node = findByText(root, text, instance)
 
         if (node != null) {
             val rect = Rect()
@@ -36,8 +35,10 @@ class UiTreeCapturer(private val service: AccessibilityService) {
             val cx = rect.centerX()
             val cy = rect.centerY()
             node.recycle()
+            root.recycle()
             return Pair(cx, cy)
         }
+        root.recycle()
         return null
     }
 
@@ -89,18 +90,31 @@ class UiTreeCapturer(private val service: AccessibilityService) {
 
     private fun findByText(
         node: AccessibilityNodeInfo,
-        text: String
+        text: String,
+        instance: Int = 0
+    ): AccessibilityNodeInfo? {
+        val skip = IntArray(1) { instance }
+        return findByTextWithSkip(node, text, skip)
+    }
+
+    private fun findByTextWithSkip(
+        node: AccessibilityNodeInfo,
+        text: String,
+        skip: IntArray
     ): AccessibilityNodeInfo? {
         if (node.isClickable || node.isCheckable) {
             val nodeText = node.text?.toString() ?: ""
             val nodeDesc = node.contentDescription?.toString() ?: ""
             if (text in nodeText || text in nodeDesc) {
-                return node
+                if (skip[0] <= 0) {
+                    return node
+                }
+                skip[0] -= 1
             }
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findByText(child, text)
+            val found = findByTextWithSkip(child, text, skip)
             if (found != null) {
                 if (child != found) child.recycle()
                 return found

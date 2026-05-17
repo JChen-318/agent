@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import random
+import time
 from typing import Optional
 
 import websockets
@@ -18,6 +20,11 @@ from agent.device.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Actions that are safe to retry on transient errors
+RETRYABLE_ACTIONS = {"click", "click_by_text", "swipe", "scroll", "back", "home",
+                     "recent_apps", "get_ui_tree", "wait", "long_press"}
+MAX_ACTION_RETRIES = 2
 
 
 class DeviceBridge:
@@ -38,6 +45,11 @@ class DeviceBridge:
         self.connected = False
         self._request_id = 0
         self._event_handlers: dict[str, list] = {}
+
+        # Action result cache for read-only operations
+        self._action_cache: dict[tuple, dict] = {}
+        self._cache_max_size = 50
+        self._cache_ttl = 2.0  # seconds
 
     async def connect(self) -> None:
         """Connect to phone WebSocket server with auto-reconnect."""
@@ -93,16 +105,76 @@ class DeviceBridge:
         raise ConnectionError("WebSocket closed while waiting for response")
 
     async def execute(self, action: str, args: dict, timeout: float = 30.0) -> dict:
-        """Execute any action on device and return result dict."""
-        cmd_type = CommandType(action)
+        """Execute any action on device. Retries idempotent actions on transient errors."""
+        try:
+            cmd_type = CommandType(action)
+        except ValueError:
+            return {
+                "status": "error",
+                "data": {},
+                "error": f"Unknown action: {action}",
+                "message": f"No such command type: {action}",
+            }
+
         cmd = Command(type=cmd_type, args=args)
-        resp = await self.send_command(cmd, timeout=timeout)
-        return {
-            "status": resp.status,
-            "data": resp.data or {},
-            "error": resp.error,
-            "message": resp.message,
-        }
+
+        # Check result cache for read-only queries
+        if action == "get_ui_tree":
+            cache_key = (action, json.dumps(args, sort_keys=True))
+            if cache_key in self._action_cache:
+                entry = self._action_cache[cache_key]
+                if time.time() - entry["_ts"] < self._cache_ttl:
+                    return entry["result"]
+                del self._action_cache[cache_key]
+
+        max_retries = MAX_ACTION_RETRIES if action in RETRYABLE_ACTIONS else 0
+        last_result: Optional[dict] = None
+        for attempt in range(max_retries + 1):
+            try:
+                resp = await self.send_command(cmd, timeout=timeout)
+                result = {
+                    "status": resp.status,
+                    "data": resp.data or {},
+                    "error": resp.error,
+                    "message": resp.message,
+                }
+                if result.get("status") == "error":
+                    err_str = str(result.get("error", "")).lower()
+                    if any(sub in err_str for sub in ("timed out", "connection", "reset", "broken pipe")):
+                        if attempt < max_retries:
+                            delay = 0.5 * (2 ** attempt) + random.random()
+                            logger.warning(
+                                f"Device action '{action}' transient error (attempt {attempt+1}), "
+                                f"retrying in {delay:.1f}s: {err_str}"
+                            )
+                            await asyncio.sleep(delay)
+                            last_result = result
+                            continue
+                # Cache successful read-only results
+                if action == "get_ui_tree" and result.get("status") == "ok":
+                    if len(self._action_cache) >= self._cache_max_size:
+                        oldest = min(self._action_cache, key=lambda k: self._action_cache[k]["_ts"])
+                        del self._action_cache[oldest]
+                    self._action_cache[cache_key] = {"result": result, "_ts": time.time()}
+                return result
+            except (ConnectionError, TimeoutError) as e:
+                last_result = {
+                    "status": "error",
+                    "data": {},
+                    "error": str(e),
+                    "message": f"Failed to execute {action}",
+                }
+                if attempt < max_retries:
+                    delay = 0.5 * (2 ** attempt) + random.random()
+                    logger.warning(
+                        f"Device action '{action}' failed (attempt {attempt+1}), "
+                        f"retrying in {delay:.1f}s: {e}"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    return last_result
+
+        return last_result or {"status": "error", "data": {}, "error": "Max retries exhausted"}
 
     async def get_ui_tree(self, max_depth: int = 20) -> dict:
         """Request full UI tree from device."""

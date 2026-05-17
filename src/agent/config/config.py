@@ -1,6 +1,7 @@
 """Configuration loader using pydantic-settings with YAML + env support."""
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -9,12 +10,25 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
 
+def _data_dir() -> Path:
+    """Return the data directory, works in dev and PyInstaller bundles."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "agent"
+    return Path(__file__).parent.parent
+
+
 class LLMConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     model: str = "gpt-4o"
     max_tokens: int = 4096
     temperature: float = 0.0
+    max_retries: int = 3
+    retry_delay_base: float = 1.0
+    retry_delay_max: float = 30.0
+    fallback_base_url: str = ""
+    fallback_api_key: str = ""
+    fallback_model: str = ""
 
 
 class DeviceConfig(BaseModel):
@@ -89,9 +103,9 @@ def _resolve_dict(d: dict) -> dict:
 def load_config(config_path: Optional[str] = None) -> AppConfig:
     """Load configuration from YAML file, with env var interpolation."""
     if config_path is None:
-        config_path = Path(__file__).parent.parent / "config" / "default.yaml"
+        config_path = _data_dir() / "config" / "default.yaml"
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     raw = _resolve_dict(raw)

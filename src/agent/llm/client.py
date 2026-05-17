@@ -1,7 +1,9 @@
 """OpenAI-compatible LLM client wrapper."""
 
+import asyncio
 import json
 import logging
+import random
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -34,11 +36,30 @@ class LLMClient:
         model: str = "gpt-4o",
         max_tokens: int = 4096,
         temperature: float = 0.0,
+        max_retries: int = 3,
+        retry_delay_base: float = 1.0,
+        retry_delay_max: float = 30.0,
+        fallback_base_url: str = "",
+        fallback_api_key: str = "",
+        fallback_model: str = "",
     ):
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
-        self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        self.max_retries = max_retries
+        self.retry_delay_base = retry_delay_base
+        self.retry_delay_max = retry_delay_max
+        self.base_url = base_url
+        self.api_key = api_key
+        self.client = AsyncOpenAI(base_url=base_url, api_key=api_key or "sk-placeholder")
+
+        self._fallback_client: Optional[AsyncOpenAI] = None
+        self._fallback_model: str = ""
+        self._fallback_base_url = fallback_base_url
+        self._fallback_api_key = fallback_api_key
+        if fallback_base_url and fallback_api_key:
+            self._fallback_client = AsyncOpenAI(base_url=fallback_base_url, api_key=fallback_api_key)
+            self._fallback_model = fallback_model or model
 
     async def chat(
         self,
@@ -46,7 +67,7 @@ class LLMClient:
         tools: Optional[list[dict]] = None,
         tool_choice: str = "auto",
     ) -> LLMResponse:
-        """Send messages to the LLM and parse the response."""
+        """Send messages to the LLM and parse the response. Retries on transient errors."""
         kwargs = {
             "model": self.model,
             "messages": messages,
@@ -57,30 +78,80 @@ class LLMClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice
 
-        resp = await self.client.chat.completions.create(**kwargs)
-        choice = resp.choices[0]
-        msg = choice.message
+        last_error: Optional[Exception] = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = await self.client.chat.completions.create(**kwargs)
+                choice = resp.choices[0]
+                msg = choice.message
 
-        tool_calls = []
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
-                try:
-                    args = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    args = {}
-                tool_calls.append(ToolCall(
-                    id=tc.id,
-                    name=tc.function.name,
-                    arguments=args,
-                ))
+                tool_calls = []
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        try:
+                            args = json.loads(tc.function.arguments)
+                        except json.JSONDecodeError:
+                            args = {}
+                        tool_calls.append(ToolCall(
+                            id=tc.id,
+                            name=tc.function.name,
+                            arguments=args,
+                        ))
 
-        content = msg.content
+                return LLMResponse(
+                    content=msg.content,
+                    tool_calls=tool_calls,
+                    finish_reason=choice.finish_reason or "stop",
+                )
 
-        return LLMResponse(
-            content=content,
-            tool_calls=tool_calls,
-            finish_reason=choice.finish_reason or "stop",
-        )
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    delay = min(
+                        self.retry_delay_base * (2 ** attempt) + random.uniform(0, 0.5),
+                        self.retry_delay_max,
+                    )
+                    logger.warning(
+                        f"LLM API error (attempt {attempt+1}/{self.max_retries+1}): {e}. "
+                        f"Retrying in {delay:.1f}s"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"LLM API failed after {self.max_retries+1} attempts: {e}")
+
+        # All retries exhausted — try fallback if configured
+        if self._fallback_client:
+            logger.warning(f"Primary LLM failed, trying fallback: {self._fallback_model}")
+            try:
+                kwargs["model"] = self._fallback_model
+                resp = await self._fallback_client.chat.completions.create(**kwargs)
+                choice = resp.choices[0]
+                msg = choice.message
+
+                tool_calls = []
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        try:
+                            args = json.loads(tc.function.arguments)
+                        except json.JSONDecodeError:
+                            args = {}
+                        tool_calls.append(ToolCall(
+                            id=tc.id,
+                            name=tc.function.name,
+                            arguments=args,
+                        ))
+
+                return LLMResponse(
+                    content=msg.content,
+                    tool_calls=tool_calls,
+                    finish_reason=choice.finish_reason or "stop",
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Both primary and fallback LLM failed. Primary: {last_error}. Fallback: {e}"
+                ) from e
+
+        raise RuntimeError(f"LLM API failed after {self.max_retries+1} attempts: {last_error}")
 
     async def chat_raw(self, messages: list[dict], **kwargs) -> str:
         """Simple chat returning raw text content. No tool calling."""

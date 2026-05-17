@@ -39,7 +39,7 @@ class AgentApp:
             datefmt="%H:%M:%S",
         )
 
-    def init(self) -> None:
+    def init(self, skip_voice: bool = False) -> None:
         """Initialize all components."""
         # LLM client
         self.llm = LLMClient(
@@ -48,6 +48,12 @@ class AgentApp:
             model=self.config.llm.model,
             max_tokens=self.config.llm.max_tokens,
             temperature=self.config.llm.temperature,
+            max_retries=self.config.llm.max_retries,
+            retry_delay_base=self.config.llm.retry_delay_base,
+            retry_delay_max=self.config.llm.retry_delay_max,
+            fallback_base_url=self.config.llm.fallback_base_url,
+            fallback_api_key=self.config.llm.fallback_api_key,
+            fallback_model=self.config.llm.fallback_model,
         )
 
         # Device bridge
@@ -59,24 +65,28 @@ class AgentApp:
         )
 
         # Whisper transcriber (optional)
-        try:
-            self.transcriber = Transcriber(
-                model_size=self.config.whisper.model_size,
-                device=self.config.whisper.device,
-                compute_type=self.config.whisper.compute_type,
-                use_vad=self.config.whisper.use_vad,
-            )
-            logger.info(f"Whisper transcriber loaded (model: {self.config.whisper.model_size})")
-        except Exception as e:
-            logger.warning(f"Whisper not available: {e}. Voice input disabled.")
+        if not skip_voice:
+            try:
+                self.transcriber = Transcriber(
+                    model_size=self.config.whisper.model_size,
+                    device=self.config.whisper.device,
+                    compute_type=self.config.whisper.compute_type,
+                    use_vad=self.config.whisper.use_vad,
+                )
+                logger.info(f"Whisper transcriber loaded (model: {self.config.whisper.model_size})")
+            except Exception as e:
+                logger.warning(f"Whisper not available: {e}. Voice input disabled.")
 
         # TTS
-        if self.config.tts.enabled:
+        if not skip_voice and self.config.tts.enabled:
             try:
                 self.tts = TTSEngine()
                 logger.info("TTS loaded")
             except Exception as e:
                 logger.warning(f"TTS not available: {e}")
+
+        # Planner (for complex task decomposition)
+        from agent.core.planner import Planner
 
         # Agent loop
         mode = InteractionMode(self.config.interaction.mode)
@@ -87,13 +97,18 @@ class AgentApp:
             device_bridge=self.bridge,
             mode=mode,
             safety_level=safety,
+            transcriber=self.transcriber,
+            planner=Planner(self.llm),
         )
 
         # Register callbacks
         if self.tts:
-            self.loop.on_speak = lambda text: asyncio.ensure_future(
-                self.tts.speak(text)
-            )
+            def _speak(text: str) -> None:
+                try:
+                    asyncio.get_running_loop().create_task(self.tts.speak(text))
+                except RuntimeError:
+                    pass  # No running event loop
+            self.loop.on_speak = _speak
 
         self.loop.on_action = lambda action, args: print(
             f"\n  Action: {action}({args})"
@@ -131,7 +146,8 @@ class AgentApp:
             print("Make sure the Android APK is installed and the accessibility service is enabled.")
             print(f"Expected device at: {self.config.device.host}:{self.config.device.port}")
         finally:
-            await self.loop.device.disconnect()
+            if self.loop is not None:
+                await self.loop.device.disconnect()
             print("Agent stopped.")
 
 
@@ -148,6 +164,10 @@ def main() -> None:
     parser.add_argument("--voice", action="store_true", help="Enable voice input")
     parser.add_argument("--model", help="LLM model name")
     parser.add_argument("--command", help="Execute a single command directly (non-interactive)")
+    parser.add_argument("--web", action="store_true", help="Launch web UI instead of terminal mode")
+    parser.add_argument("--desktop", action="store_true", help="Launch as standalone desktop app (native window, no terminal)")
+    parser.add_argument("--web-host", default="127.0.0.1", help="Web UI bind address (default: 127.0.0.1)")
+    parser.add_argument("--web-port", type=int, default=8080, help="Web UI port (default: 8080)")
 
     args = parser.parse_args()
 
@@ -168,9 +188,14 @@ def main() -> None:
     if args.model:
         app.config.llm.model = args.model
 
-    app.init()
+    skip_voice = (args.web or args.desktop) and not args.voice
+    app.init(skip_voice=skip_voice)
 
-    if args.command:
+    if args.desktop:
+        _run_desktop(app, host=args.web_host, port=args.web_port)
+    elif args.web:
+        _run_web(app, host=args.web_host, port=args.web_port)
+    elif args.command:
         # Non-interactive: execute single command
         async def _run_cmd():
             await app.loop.device.connect()
@@ -180,6 +205,36 @@ def main() -> None:
     else:
         # Interactive
         asyncio.run(app.start())
+
+
+def _run_desktop(app: "AgentApp", host: str = "127.0.0.1", port: int = 8080) -> None:
+    """Launch as a native desktop window (no terminal)."""
+    from agent.ui.desktop import run_desktop
+    run_desktop(app, host=host, port=port)
+
+
+def _run_web(app: "AgentApp", host: str = "127.0.0.1", port: int = 8080) -> None:
+    """Launch the web UI server."""
+    import uvicorn
+    from agent.ui.web_server import AgentWebServer
+
+    web = AgentWebServer()
+    web.config = app.config
+    web.llm = app.llm
+    web.bridge = app.bridge
+    web.loop = app.loop
+    web._setup_logging()
+
+    # Wire WebSocket broadcast callbacks
+    web.loop.on_action = lambda action, args: asyncio.ensure_future(
+        web._broadcast({"type": "action", "action": action, "args": args})
+    )
+    web.loop.on_speak = lambda text: asyncio.ensure_future(
+        web._broadcast({"type": "speak", "text": text})
+    )
+
+    print(f"\n  Web UI: http://{host}:{port}\n")
+    uvicorn.run(web.app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

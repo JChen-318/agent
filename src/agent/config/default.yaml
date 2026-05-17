@@ -6,6 +6,12 @@ llm:
   model: "${LLM_MODEL:-gpt-4o}"
   max_tokens: 4096
   temperature: 0.0
+  max_retries: 3
+  retry_delay_base: 1.0
+  retry_delay_max: 30.0
+  fallback_base_url: "${LLM_FALLBACK_BASE_URL:-}"
+  fallback_api_key: "${LLM_FALLBACK_API_KEY:-}"
+  fallback_model: "${LLM_FALLBACK_MODEL:-}"
 
 device:
   host: "${DEVICE_HOST:-192.168.1.100}"

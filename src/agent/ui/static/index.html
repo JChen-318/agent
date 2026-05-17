@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Android Agent</title>
+<style>
+  :root {
+    --bg: #0a0e13;
+    --surface: #11161d;
+    --surface2: #181d25;
+    --border: #1e2530;
+    --border2: #283040;
+    --text: #e4e8ee;
+    --muted: #6b7380;
+    --accent: #4d9fff;
+    --accent-dim: rgba(77,159,255,0.10);
+    --accent-glow: rgba(77,159,255,0.25);
+    --green: #3fb950;
+    --green-dim: rgba(63,185,80,0.12);
+    --red: #f85149;
+    --red-dim: rgba(248,81,73,0.10);
+    --amber: #d2991d;
+    --amber-dim: rgba(210,153,29,0.10);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --mono: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ═══ Sidebar ═══ */
+  nav {
+    width: 220px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    padding: 20px 0 0 0;
+  }
+  nav .brand {
+    padding: 0 20px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  nav .brand .icon {
+    width: 34px; height: 34px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, #4d9fff, #7c5cfc);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+  nav .brand h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+  }
+  nav .brand span {
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 400;
+    display: block;
+  }
+
+  nav .nav-section {
+    padding: 8px 16px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  nav .status-card {
+    margin: 4px 12px 8px;
+    padding: 14px;
+    background: var(--surface2);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  nav .status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    font-size: 13px;
+  }
+  nav .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  nav .status-dot.on  { background: var(--green); box-shadow: 0 0 8px rgba(63,185,80,0.5); }
+  nav .status-dot.off { background: var(--border2); }
+  nav .status-label { flex:1; }
+  nav .status-value { color: var(--muted); font-size: 11px; }
+
+  nav .btn-row {
+    margin: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  nav .btn-row button {
+    width: 100%;
+    padding: 9px 0;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    transition: .15s;
+    font-family: var(--font);
+  }
+  nav .btn-row button:hover { background: var(--border); }
+  nav .btn-row button.accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  nav .btn-row button.accent:hover { filter: brightness(1.1); }
+
+  /* ═══ Main ═══ */
+  .main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .toolbar .title {
+    font-size: 14px;
+    font-weight: 600;
+    flex: 1;
+  }
+  .toolbar .pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 99px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .toolbar .pill.live { border-color: var(--green); color: var(--green); }
+
+  /* Messages */
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    scroll-behavior: smooth;
+  }
+  .messages::-webkit-scrollbar { width: 5px; }
+  .messages::-webkit-scrollbar-track { background: transparent; }
+  .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+  .messages::-webkit-scrollbar-thumb:hover { background: var(--border2); }
+
+  .msg {
+    max-width: 75%;
+    padding: 10px 16px;
+    border-radius: var(--radius);
+    font-size: 13.5px;
+    line-height: 1.55;
+    animation: fadeIn .25s ease;
+    word-break: break-word;
+    position: relative;
+  }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+
+  .msg.system {
+    align-self: center;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    max-width: 90%;
+    padding: 4px 12px;
+  }
+  .msg.command {
+    align-self: flex-end;
+    background: var(--accent);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+    box-shadow: 0 2px 12px var(--accent-glow);
+  }
+  .msg.response {
+    align-self: flex-start;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .msg.action {
+    align-self: flex-start;
+    background: var(--amber-dim);
+    border: 1px solid rgba(210,153,29,0.15);
+    border-left: 3px solid var(--amber);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    border-radius: 4px var(--radius) var(--radius) 4px;
+    color: #e0c070;
+  }
+  .msg.error {
+    align-self: center;
+    background: var(--red-dim);
+    border: 1px solid rgba(248,81,73,0.2);
+    color: var(--red);
+    font-size: 13px;
+    max-width: 85%;
+  }
+
+  .msg .ts {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* Welcome */
+  .welcome {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    gap: 8px;
+    pointer-events: none;
+  }
+  .welcome .big-icon {
+    font-size: 48px;
+    margin-bottom: 8px;
+    opacity: 0.6;
+  }
+  .welcome h2 { font-size: 20px; font-weight: 500; color: var(--text); }
+  .welcome p { font-size: 13px; }
+
+  /* Input */
+  .input-bar {
+    padding: 14px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .input-bar input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 11px 16px;
+    border-radius: 99px;
+    font-size: 13.5px;
+    outline: none;
+    transition: .2s;
+    font-family: var(--font);
+  }
+  .input-bar input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .input-bar input::placeholder { color: var(--muted); }
+  .input-bar button {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+    transition: .15s;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .input-bar button:hover { filter: brightness(1.15); transform: scale(1.04); }
+  .input-bar button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* ═══ Settings overlay ═══ */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 20;
+    display: none;
+    justify-content: flex-end;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  .overlay.open { display: flex; }
+
+  .settings {
+    width: 400px;
+    max-width: 92vw;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    padding: 28px 24px;
+    overflow-y: auto;
+    animation: slideIn .25s ease;
+  }
+  @keyframes slideIn { from { transform:translateX(30%); opacity:0; } to { transform:translateX(0); opacity:1; } }
+
+  .settings h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .settings h2 button {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 22px;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .settings h2 button:hover { color: var(--text); }
+  .settings .section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--muted);
+    margin: 28px 0 14px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-weight: 600;
+  }
+  .settings .field {
+    margin-bottom: 14px;
+  }
+  .settings label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 5px;
+    font-weight: 500;
+  }
+  .settings input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    outline: none;
+    transition: .15s;
+    font-family: var(--font);
+  }
+  .settings input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .settings input::placeholder { color: var(--muted); opacity: 0.6; }
+  .settings .actions {
+    margin-top: 28px;
+    display: flex;
+    gap: 10px;
+  }
+  .settings .actions button {
+    flex: 1;
+    padding: 11px 0;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    cursor: pointer;
+    border: none;
+    font-weight: 600;
+    transition: .15s;
+    font-family: var(--font);
+  }
+  .settings .btn-save { background: var(--green); color: #000; }
+  .settings .btn-save:hover { filter: brightness(1.15); }
+  .settings .btn-connect { background: var(--accent); color: #fff; }
+  .settings .btn-connect:hover { filter: brightness(1.15); }
+  .settings .hint {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 10px;
+    text-align: center;
+  }
+  .settings .version {
+    font-size: 10px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 32px;
+    opacity: 0.5;
+  }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav>
+  <div class="brand">
+    <div class="icon">📱</div>
+    <div>
+      <h1>Android Agent</h1>
+      <span>v0.1.0</span>
+    </div>
+  </div>
+
+  <div class="nav-section">Status</div>
+  <div class="status-card">
+    <div class="status-row">
+      <div class="status-dot" id="dev-dot"></div>
+      <span class="status-label">Device</span>
+      <span class="status-value" id="dev-label">—</span>
+    </div>
+    <div class="status-row">
+      <div class="status-dot" id="agent-dot"></div>
+      <span class="status-label">Agent</span>
+      <span class="status-value" id="agent-label">—</span>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button id="btn-connect" class="accent" onclick="toggleDevice()">Connect Device</button>
+    <button onclick="toggleSettings()">Settings</button>
+  </div>
+</nav>
+
+<!-- Main -->
+<div class="main-area">
+  <div class="toolbar">
+    <span class="title">Control</span>
+    <span class="pill" id="mode-pill">Single</span>
+    <span class="pill" id="model-pill">—</span>
+  </div>
+
+  <div class="messages" id="messages">
+    <div class="welcome" id="welcome">
+      <div class="big-icon">🤖</div>
+      <h2>Android Agent</h2>
+      <p>Connect your device and enter a command to start</p>
+    </div>
+  </div>
+
+  <div class="input-bar">
+    <input id="cmd-input" type="text" placeholder="Type a command..." autofocus
+      onkeydown="if(event.key==='Enter')sendCommand()">
+    <button id="send-btn" onclick="sendCommand()" title="Send">↑</button>
+  </div>
+</div>
+
+<!-- Settings -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)toggleSettings()">
+  <div class="settings">
+    <h2>Settings <button onclick="toggleSettings()">&times;</button></h2>
+
+    <div class="section-label">LLM Configuration</div>
+    <div class="field">
+      <label>Endpoint URL</label>
+      <input id="cfg-llm-url" placeholder="https://api.openai.com/v1" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>API Key</label>
+      <input id="cfg-llm-key" type="password" placeholder="sk-..." autocomplete="off">
+    </div>
+    <div class="field">
+      <label>Model</label>
+      <input id="cfg-llm-model" placeholder="gpt-4o">
+    </div>
+
+    <div class="section-label">Device Connection</div>
+    <div class="field">
+      <label>IP Address</label>
+      <input id="cfg-dev-host" placeholder="192.168.1.100">
+    </div>
+    <div class="field">
+      <label>Port</label>
+      <input id="cfg-dev-port" type="number" placeholder="8765">
+    </div>
+
+    <div class="actions">
+      <button class="btn-connect" onclick="toggleDevice()">Connect</button>
+      <button class="btn-save" onclick="saveConfig()">Save Config</button>
+    </div>
+    <div class="hint" id="settings-note"></div>
+    <div class="version">Android Agent v0.1.0</div>
+  </div>
+</div>
+
+<script>
+let ws = null;
+let deviceConnected = false;
+let agentRunning = false;
+
+function $(id) { return document.getElementById(id); }
+
+// ── WebSocket ──────────────────────────────
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => addMsg('system', 'Connected');
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    switch (data.type) {
+      case 'connected':
+        fetchStatus(); fetchConfig();
+        break;
+      case 'status':
+        if ('device_connected' in data) {
+          deviceConnected = data.device_connected;
+          updateUI();
+        }
+        break;
+      case 'command_sent':
+        addMsg('command', data.text);
+        break;
+      case 'action': {
+        const argsStr = JSON.stringify(data.args||{}).replace(/[{}"]/g,'').replace(/,/g,', ');
+        addMsg('action', data.action + '(' + argsStr + ')');
+        break;
+      }
+      case 'speak':
+        addMsg('response', data.text);
+        break;
+      case 'response':
+        addMsg('response', data.text);
+        break;
+      case 'error':
+        addMsg('error', data.text);
+        break;
+    }
+  };
+
+  ws.onclose = () => {
+    addMsg('system', 'Disconnected — reconnecting…');
+    setTimeout(connectWS, 3000);
+  };
+}
+
+// ── Messages ───────────────────────────────
+function addMsg(type, text) {
+  const welcome = $('welcome');
+  if (welcome) welcome.remove();
+  const div = document.createElement('div');
+  div.className = 'msg ' + type;
+  const t = new Date();
+  const ts = t.getHours().toString().padStart(2,'0') + ':' +
+             t.getMinutes().toString().padStart(2,'0') + ':' +
+             t.getSeconds().toString().padStart(2,'0');
+  div.innerHTML = text + '<div class="ts">' + ts + '</div>';
+  const main = $('messages');
+  main.appendChild(div);
+  main.scrollTop = main.scrollHeight;
+}
+
+// ── Status ─────────────────────────────────
+function updateUI() {
+  const dd = $('dev-dot'), dl = $('dev-label');
+  const ad = $('agent-dot'), al = $('agent-label');
+  const btn = $('btn-connect');
+
+  dd.className = 'status-dot ' + (deviceConnected ? 'on' : 'off');
+  dl.textContent = deviceConnected ? 'Connected' : 'Offline';
+  ad.className = 'status-dot ' + (agentRunning ? 'on' : 'off');
+  al.textContent = agentRunning ? 'Running' : 'Idle';
+  btn.textContent = deviceConnected ? 'Disconnect' : 'Connect Device';
+  btn.classList.toggle('accent', !deviceConnected);
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const s = await r.json();
+    deviceConnected = s.device_connected;
+    agentRunning = s.agent_running;
+    $('mode-pill').textContent = s.mode === 'continuous' ? 'Continuous' : 'Single';
+    $('model-pill').textContent = s.model || '—';
+    updateUI();
+  } catch(e) { /* retry soon */ }
+}
+
+// ── Commands ───────────────────────────────
+function sendCommand() {
+  const input = $('cmd-input');
+  const text = input.value.trim();
+  if (!text) return;
+  if (!deviceConnected) {
+    addMsg('error', 'Device not connected — connect in Settings first');
+    return;
+  }
+  input.value = '';
+  $('send-btn').disabled = true;
+  ws.send(JSON.stringify({ type: 'command', text }));
+  setTimeout(() => { $('send-btn').disabled = false; }, 500);
+}
+
+// ── Settings ───────────────────────────────
+function toggleSettings() {
+  $('overlay').classList.toggle('open');
+}
+
+async function fetchConfig() {
+  try {
+    const r = await fetch('/api/config');
+    const c = await r.json();
+    $('cfg-llm-url').value = c.llm?.base_url || '';
+    $('cfg-llm-model').value = c.llm?.model || '';
+    $('cfg-dev-host').value = c.device?.host || '';
+    $('cfg-dev-port').value = c.device?.port || '';
+  } catch(e) {}
+}
+
+async function saveConfig() {
+  const data = {
+    llm: {
+      base_url: $('cfg-llm-url').value.trim(),
+      api_key: $('cfg-llm-key').value.trim(),
+      model: $('cfg-llm-model').value.trim(),
+    },
+    device: {
+      host: $('cfg-dev-host').value.trim(),
+      port: parseInt($('cfg-dev-port').value) || 8765,
+    },
+  };
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data),
+    });
+    const j = await r.json();
+    $('settings-note').textContent = j.status === 'ok' ? 'Saved.' : 'Save failed.';
+    ws.send(JSON.stringify({ type: 'config_update', data }));
+  } catch(e) {
+    $('settings-note').textContent = 'Network error.';
+  }
+}
+
+async function toggleDevice() {
+  const endpoint = deviceConnected ? '/api/disconnect' : '/api/connect';
+  try {
+    const r = await fetch(endpoint, { method: 'POST' });
+    const j = await r.json();
+    if (j.status === 'ok') {
+      deviceConnected = !deviceConnected;
+      updateUI();
+    }
+    addMsg('system', j.message || j.status);
+  } catch(e) {
+    addMsg('error', 'Failed: ' + e.message);
+  }
+}
+
+// ── Init ───────────────────────────────────
+connectWS();
+fetchStatus();
+</script>
+</body>
+</html>
