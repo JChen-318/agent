@@ -1,0 +1,61 @@
+name: Build Agent (Windows/macOS)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'pyproject.toml'
+      - 'android-agent.spec'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'pyproject.toml'
+      - 'android-agent.spec'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -e ".[tts]" pyinstaller
+
+      - name: Build Windows executable
+        run: pyinstaller android-agent.spec --noconfirm
+
+      - name: Upload Windows exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-agent-windows
+          path: dist/android-agent.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -e ".[tts]" pyinstaller
+
+      - name: Build macOS executable
+        run: pyinstaller android-agent.spec --noconfirm
+
+      - name: Upload macOS binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-agent-macos
+          path: dist/android-agent
