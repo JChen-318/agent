@@ -99,19 +99,37 @@ class AgentWebServer:
         self._start_discovery()
 
     def _start_discovery(self) -> None:
-        """Start mDNS discovery and broadcast new devices to UI."""
-        self.discovery = DeviceDiscovery(
-            on_change=lambda: asyncio.ensure_future(
+        """Start device discovery and broadcast new devices to UI."""
+        def _on_device_change() -> None:
+            if not self.discovery:
+                return
+            usb_list = []
+            for d in self.discovery.adb_devices:
+                info = {}
+                if self.discovery._adb:
+                    info = self.discovery._adb.get_device_info(d.serial)
+                usb_list.append({
+                    "serial": d.serial,
+                    "display_name": d.display_name,
+                    "state": d.state,
+                    "model": info.get("model", d.model),
+                    "android_version": info.get("android_version", ""),
+                    "type": "usb",
+                })
+            asyncio.ensure_future(
                 self._broadcast({
                     "type": "devices",
                     "devices": [
                         {"name": d.name, "display_name": d.display_name,
-                         "address": d.address, "port": d.port, "model": d.model}
+                         "address": d.address, "port": d.port, "model": d.model, "type": "wifi"}
                         for d in self.discovery.devices
-                    ]
+                    ],
+                    "usb_devices": usb_list,
+                    "adb_available": self.discovery.adb_available,
                 })
-            ) if asyncio.get_event_loop().is_running() else None
-        )
+            )
+
+        self.discovery = DeviceDiscovery(on_change=_on_device_change)
         self.discovery.start()
 
     def shutdown(self) -> None:
@@ -242,18 +260,34 @@ class AgentWebServer:
         @app.get("/api/devices")
         async def list_devices():
             if not self.discovery:
-                return {"devices": [], "scanning": False}
+                return {"devices": [], "usb_devices": [], "adb_available": False, "scanning": False}
+
+            # Network devices
+            net_devices = [
+                {"name": d.name, "display_name": d.display_name,
+                 "address": d.address, "port": d.port, "model": d.model, "type": "wifi"}
+                for d in self.discovery.devices
+            ]
+
+            # ADB USB devices
+            usb_devices = []
+            for d in self.discovery.adb_devices:
+                info = {}
+                if self.discovery._adb:
+                    info = self.discovery._adb.get_device_info(d.serial)
+                usb_devices.append({
+                    "serial": d.serial,
+                    "display_name": d.display_name,
+                    "state": d.state,
+                    "model": info.get("model", d.model),
+                    "android_version": info.get("android_version", ""),
+                    "type": "usb",
+                })
+
             return {
-                "devices": [
-                    {
-                        "name": d.name,
-                        "display_name": d.display_name,
-                        "address": d.address,
-                        "port": d.port,
-                        "model": d.model,
-                    }
-                    for d in self.discovery.devices
-                ],
+                "devices": net_devices,
+                "usb_devices": usb_devices,
+                "adb_available": self.discovery.adb_available,
                 "scanning": self.discovery.is_scanning,
             }
 
@@ -263,6 +297,20 @@ class AgentWebServer:
                 return {"status": "error", "message": "Discovery not running"}
             threading.Thread(target=self.discovery.scan_network, daemon=True).start()
             return {"status": "ok", "message": "Scan started"}
+
+        @app.post("/api/adb-forward")
+        async def adb_forward(data: dict):
+            if not self.discovery or not self.discovery._adb:
+                return {"status": "error", "message": "ADB not available"}
+            serial = data.get("serial", "")
+            local_port = data.get("local_port", 8765)
+            if not serial:
+                return {"status": "error", "message": "Serial required"}
+            ok = self.discovery.adb_forward(serial, local_port)
+            if ok:
+                return {"status": "ok", "message": f"Forwarded to 127.0.0.1:{local_port}",
+                        "host": "127.0.0.1", "port": local_port}
+            return {"status": "error", "message": "Forward failed"}
 
         @app.post("/api/command")
         async def send_command(data: dict):
@@ -293,13 +341,28 @@ class AgentWebServer:
             await ws.send_json({"type": "connected"})
             # Send current discovered devices
             if self.discovery:
+                usb_list = []
+                for d in self.discovery.adb_devices:
+                    info = {}
+                    if self.discovery._adb:
+                        info = self.discovery._adb.get_device_info(d.serial)
+                    usb_list.append({
+                        "serial": d.serial,
+                        "display_name": d.display_name,
+                        "state": d.state,
+                        "model": info.get("model", d.model),
+                        "android_version": info.get("android_version", ""),
+                        "type": "usb",
+                    })
                 await ws.send_json({
                     "type": "devices",
                     "devices": [
                         {"name": d.name, "display_name": d.display_name,
-                         "address": d.address, "port": d.port, "model": d.model}
+                         "address": d.address, "port": d.port, "model": d.model, "type": "wifi"}
                         for d in self.discovery.devices
-                    ]
+                    ],
+                    "usb_devices": usb_list,
+                    "adb_available": self.discovery.adb_available,
                 })
             try:
                 while True:

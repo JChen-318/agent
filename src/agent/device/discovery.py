@@ -1,4 +1,4 @@
-"""Device discovery — mDNS + TCP scan for Android Agent devices on the local network."""
+"""Device discovery — ADB + mDNS + TCP scan for Android Agent devices."""
 
 import logging
 import socket
@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 
 from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+
+from agent.device.adb import AdbManager, AdbDevice as AdbDev
 
 logger = logging.getLogger(__name__)
 
@@ -34,35 +36,46 @@ class AgentDevice:
 
 
 class DeviceDiscovery(ServiceListener):
-    """Browses for Android Agent devices via mDNS and TCP scan."""
+    """Browses for Android Agent devices via ADB, mDNS, and TCP scan."""
 
     def __init__(self, on_change: Optional[Callable] = None):
         self._zc: Optional[Zeroconf] = None
         self._browser: Optional[ServiceBrowser] = None
         self._devices: dict[str, AgentDevice] = {}
+        self._adb_devices: dict[str, AdbDev] = {}
+        self._adb: Optional[AdbManager] = None
         self._lock = threading.Lock()
         self._on_change = on_change
         self._running = False
         self._scanning = False
 
     def start(self) -> None:
-        """Start mDNS browsing."""
+        """Start all discovery mechanisms."""
         if self._running:
             return
+        # ADB (wired USB)
+        self._adb = AdbManager()
+        if self._adb.available:
+            logger.info("ADB available — checking for USB devices")
+            threading.Thread(target=self._check_adb, daemon=True).start()
+
+        # mDNS
         self._zc = Zeroconf()
         self._browser = ServiceBrowser(self._zc, SERVICE_TYPE, self)
         self._running = True
-        logger.info("Device discovery started (mDNS)")
-        # Run an initial TCP scan after a short delay
+        logger.info("Device discovery started (ADB + mDNS + TCP)")
+        # TCP scan after delay
         threading.Thread(target=self._delayed_scan, daemon=True).start()
 
     def stop(self) -> None:
-        """Stop discovery."""
+        """Stop discovery and clean up."""
         self._running = False
         if self._browser:
             self._browser.cancel()
         if self._zc:
             self._zc.close()
+        if self._adb:
+            self._adb.remove_all_forwards()
         logger.info("Device discovery stopped")
 
     @property
@@ -73,6 +86,39 @@ class DeviceDiscovery(ServiceListener):
     @property
     def is_scanning(self) -> bool:
         return self._scanning
+
+    @property
+    def adb_available(self) -> bool:
+        return self._adb is not None and self._adb.available
+
+    @property
+    def adb_devices(self) -> list[AdbDev]:
+        with self._lock:
+            return list(self._adb_devices.values())
+
+    def _check_adb(self) -> None:
+        """Check for ADB-connected devices."""
+        if not self._adb:
+            return
+        devs = self._adb.list_devices()
+        with self._lock:
+            self._adb_devices.clear()
+            for d in devs:
+                self._adb_devices[d.serial] = d
+        if devs:
+            logger.info(f"ADB: {len(devs)} device(s) found")
+            if self._on_change:
+                self._on_change()
+
+    def adb_forward(self, serial: str, local_port: int = 8765) -> bool:
+        """Set up ADB port forwarding for a device. Call before connecting."""
+        if not self._adb:
+            return False
+        return self._adb.forward_port(serial, local_port)
+
+    def adb_remove_forward(self, serial: str) -> None:
+        if self._adb:
+            self._adb.remove_forward(serial)
 
     def _delayed_scan(self) -> None:
         """Run TCP scan after mDNS has had a moment to respond."""

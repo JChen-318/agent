@@ -566,7 +566,7 @@ function connectWS() {
         }
         break;
       case 'devices':
-        updateDeviceList(data.devices || []);
+        updateDeviceList(data.devices || [], data.usb_devices || [], data.adb_available || false);
         break;
       case 'scanning':
         if (data.active) {
@@ -600,23 +600,87 @@ function connectWS() {
 }
 
 // ── Device List ────────────────────────────
-function updateDeviceList(devices) {
+function updateDeviceList(wifiDevices, usbDevices, adbOk) {
   const list = $('device-list');
-  if (!devices || devices.length === 0) {
-    list.innerHTML = '<div class="scan-hint">No devices found — ensure phone is on same WiFi</div>';
-    return;
+  let html = '';
+
+  // USB devices (ADB)
+  if (usbDevices && usbDevices.length > 0) {
+    html += '<div style="font-size:10px;color:var(--muted);padding:4px 0 4px 2px">USB</div>';
+    html += usbDevices.map(d => {
+      const isConnected = connectedAddr === '127.0.0.1:8765';
+      return `<div class="device-item${isConnected ? ' connected' : ''}"
+        onclick="connectUsb('${esc(d.serial)}', '${esc(d.display_name || d.model || 'Android')}')">
+        <span class="dev-icon">🔌</span>
+        <div class="dev-info">
+          <div class="dev-name">${esc(d.display_name || d.model || 'Android Device')}</div>
+          <div class="dev-addr">USB · ${esc(d.state)}${d.android_version ? ' · Android ' + esc(d.android_version) : ''}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } else if (adbOk) {
+    html += '<div class="scan-hint">No USB device — plug in and enable USB debugging</div>';
   }
-  list.innerHTML = devices.map(d => {
-    const isConnected = connectedAddr === d.address + ':' + d.port;
-    return `<div class="device-item${isConnected ? ' connected' : ''}"
-      onclick="connectTo('${d.address}',${d.port})" title="Click to connect">
-      <span class="dev-icon">📱</span>
-      <div class="dev-info">
-        <div class="dev-name">${esc(d.display_name || d.name)}</div>
-        <div class="dev-addr">${esc(d.address)}:${d.port}</div>
-      </div>
-    </div>`;
-  }).join('');
+
+  // WiFi devices
+  if (wifiDevices && wifiDevices.length > 0) {
+    html += '<div style="font-size:10px;color:var(--muted);padding:4px 0 4px 2px">WiFi</div>';
+    html += wifiDevices.map(d => {
+      const isConnected = connectedAddr === d.address + ':' + d.port;
+      return `<div class="device-item${isConnected ? ' connected' : ''}"
+        onclick="connectTo('${esc(d.address)}',${d.port})">
+        <span class="dev-icon">📱</span>
+        <div class="dev-info">
+          <div class="dev-name">${esc(d.display_name || d.name)}</div>
+          <div class="dev-addr">${esc(d.address)}:${d.port}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  if (!html) {
+    html = '<div class="scan-hint">No devices — scan network or connect via USB</div>';
+  }
+  list.innerHTML = html;
+}
+
+async function connectUsb(serial, displayName) {
+  if (deviceConnected) {
+    await fetch('/api/disconnect', { method: 'POST' });
+    deviceConnected = false;
+    connectedAddr = '';
+    updateUI();
+  }
+  addMsg('system', 'Setting up USB forward for ' + displayName + '...');
+  try {
+    // Set up ADB port forward
+    const fr = await fetch('/api/adb-forward', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ serial, local_port: 8765 }),
+    });
+    const fj = await fr.json();
+    if (fj.status !== 'ok') {
+      addMsg('error', 'ADB forward failed: ' + (fj.message || ''));
+      return;
+    }
+    addMsg('system', 'USB forwarded, connecting to 127.0.0.1:8765...');
+    // Connect via forwarded port
+    const r = await fetch('/api/connect', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ host: '127.0.0.1', port: 8765 }),
+    });
+    const j = await r.json();
+    if (j.status === 'ok') {
+      deviceConnected = true;
+      connectedAddr = '127.0.0.1:8765';
+      updateUI();
+    }
+    addMsg('system', j.message || j.status);
+  } catch(e) {
+    addMsg('error', 'USB connection failed: ' + e.message);
+  }
 }
 
 function esc(s) {

@@ -45,6 +45,7 @@ a = Analysis(
         "agent.ui.web_server",
         "agent.ui.desktop",
         "agent.device.discovery",
+        "agent.device.adb",
         "zeroconf",
         "zeroconf._utils",
         "zeroconf._services",
