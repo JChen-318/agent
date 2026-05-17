@@ -22,3 +22,4 @@ android-service/local.properties
 
 # Env
 .env
+*.exe

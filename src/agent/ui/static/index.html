@@ -467,9 +467,9 @@
     </div>
   </div>
 
-  <div class="nav-section">Devices</div>
+  <div class="nav-section">Devices <a href="#" onclick="scanDevices();return false" style="font-size:10px;color:var(--accent);margin-left:auto;text-decoration:none">Scan</a></div>
   <div class="device-list" id="device-list">
-    <div class="scan-hint">Scanning network...</div>
+    <div class="scan-hint" id="scan-hint">Starting scan...</div>
   </div>
   <div class="btn-row">
     <button id="btn-connect" class="accent" onclick="toggleDevice()">Connect</button>
@@ -567,6 +567,11 @@ function connectWS() {
         break;
       case 'devices':
         updateDeviceList(data.devices || []);
+        break;
+      case 'scanning':
+        if (data.active) {
+          $('scan-hint').textContent = 'Scanning local network...';
+        }
         break;
       case 'command_sent':
         addMsg('command', data.text);
@@ -762,6 +767,14 @@ async function toggleDevice() {
   }
   // Not connected — open settings for manual config
   toggleSettings();
+}
+
+// ── Scan ───────────────────────────────────
+function scanDevices() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'scan' }));
+    $('scan-hint').textContent = 'Scanning local network...';
+  }
 }
 
 // ── Init ───────────────────────────────────

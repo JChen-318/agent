@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -241,7 +242,7 @@ class AgentWebServer:
         @app.get("/api/devices")
         async def list_devices():
             if not self.discovery:
-                return {"devices": []}
+                return {"devices": [], "scanning": False}
             return {
                 "devices": [
                     {
@@ -252,8 +253,16 @@ class AgentWebServer:
                         "model": d.model,
                     }
                     for d in self.discovery.devices
-                ]
+                ],
+                "scanning": self.discovery.is_scanning,
             }
+
+        @app.post("/api/scan")
+        async def scan_network():
+            if not self.discovery:
+                return {"status": "error", "message": "Discovery not running"}
+            threading.Thread(target=self.discovery.scan_network, daemon=True).start()
+            return {"status": "ok", "message": "Scan started"}
 
         @app.post("/api/command")
         async def send_command(data: dict):
@@ -300,14 +309,8 @@ class AgentWebServer:
                         await ws.send_json({"type": "pong"})
                     elif msg_type == "scan":
                         if self.discovery:
-                            await ws.send_json({
-                                "type": "devices",
-                                "devices": [
-                                    {"name": d.name, "display_name": d.display_name,
-                                     "address": d.address, "port": d.port, "model": d.model}
-                                    for d in self.discovery.devices
-                                ]
-                            })
+                            threading.Thread(target=self.discovery.scan_network, daemon=True).start()
+                            await ws.send_json({"type": "scanning", "active": True})
                     elif msg_type == "command":
                         text = data.get("text", "").strip()
                         if text and self.loop and self._device_connected:
