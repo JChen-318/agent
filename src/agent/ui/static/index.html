@@ -526,7 +526,7 @@
     </div>
     <div class="field">
       <label>Port</label>
-      <input id="cfg-dev-port" type="number" placeholder="8765">
+      <input id="cfg-dev-port" type="number" placeholder="18765">
     </div>
 
     <div class="actions">
@@ -608,7 +608,7 @@ function updateDeviceList(wifiDevices, usbDevices, adbOk) {
   if (usbDevices && usbDevices.length > 0) {
     html += '<div style="font-size:10px;color:var(--muted);padding:4px 0 4px 2px">USB</div>';
     html += usbDevices.map(d => {
-      const isConnected = connectedAddr === '127.0.0.1:8765';
+      const isConnected = connectedAddr === '127.0.0.1:18765';
       return `<div class="device-item${isConnected ? ' connected' : ''}"
         onclick="connectUsb('${esc(d.serial)}', '${esc(d.display_name || d.model || 'Android')}')">
         <span class="dev-icon">🔌</span>
@@ -657,24 +657,24 @@ async function connectUsb(serial, displayName) {
     const fr = await fetch('/api/adb-forward', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ serial, local_port: 8765 }),
+      body: JSON.stringify({ serial, local_port: 18765 }),
     });
     const fj = await fr.json();
     if (fj.status !== 'ok') {
       addMsg('error', 'ADB forward failed: ' + (fj.message || ''));
       return;
     }
-    addMsg('system', 'USB forwarded, connecting to 127.0.0.1:8765...');
+    addMsg('system', 'USB forwarded, connecting to 127.0.0.1:18765...');
     // Connect via forwarded port
     const r = await fetch('/api/connect', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ host: '127.0.0.1', port: 8765 }),
+      body: JSON.stringify({ host: '127.0.0.1', port: 18765 }),
     });
     const j = await r.json();
     if (j.status === 'ok') {
       deviceConnected = true;
-      connectedAddr = '127.0.0.1:8765';
+      connectedAddr = '127.0.0.1:18765';
       updateUI();
     }
     addMsg('system', j.message || j.status);
@@ -796,7 +796,7 @@ async function saveConfig() {
     },
     device: {
       host: $('cfg-dev-host').value.trim(),
-      port: parseInt($('cfg-dev-port').value) || 8765,
+      port: parseInt($('cfg-dev-port').value) || 18765,
     },
   };
   try {
