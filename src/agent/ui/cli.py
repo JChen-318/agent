@@ -328,6 +328,9 @@ def _run_web(app: "AgentApp", host: str = "127.0.0.1", port: int = 8080) -> None
     web.loop = app.loop
     web._setup_logging()
 
+    # Start device discovery
+    web._start_discovery()
+
     # Wire WebSocket broadcast callbacks
     web.loop.on_action = lambda action, args: asyncio.ensure_future(
         web._broadcast({"type": "action", "action": action, "args": args})
