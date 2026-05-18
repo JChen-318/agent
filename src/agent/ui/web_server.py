@@ -52,11 +52,24 @@ class AgentWebServer:
         self._setup_routes()
 
     def _setup_logging(self) -> None:
+        import sys as _sys
         level = getattr(logging, self.config.logging.level.upper(), logging.INFO)
+        handlers = []
+        if not getattr(_sys, "frozen", False):
+            handlers.append(logging.StreamHandler(_sys.stderr))
+        else:
+            import os as _os
+            _log_dir = _os.path.dirname(_sys.executable)
+            _log_path = _os.path.join(_log_dir, "android-agent.log")
+            try:
+                handlers.append(logging.FileHandler(_log_path, encoding="utf-8"))
+            except Exception:
+                handlers.append(logging.NullHandler())
         logging.basicConfig(
             level=level,
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%H:%M:%S",
+            handlers=handlers or None,
         )
 
     def init(self) -> None:

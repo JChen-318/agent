@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import os
 import signal
+import subprocess
 import sys
 from typing import Optional
 
@@ -16,6 +18,32 @@ from agent.speech.transcriber import Transcriber
 from agent.speech.tts import TTSEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _free_port(port: int) -> None:
+    """Kill any process holding the given port (Windows)."""
+    if sys.platform != "win32":
+        return
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.strip().split()
+                pid = parts[-1] if parts else ""
+                if pid.isdigit() and pid != str(os.getpid()):
+                    logger.warning(
+                        f"Port {port} is held by PID {pid}, killing..."
+                    )
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", pid],
+                        capture_output=True, timeout=5,
+                    )
+                    return
+    except Exception as e:
+        logger.debug(f"Port cleanup skipped: {e}")
 
 
 class AgentApp:
@@ -259,9 +287,14 @@ def main() -> None:
     skip_auto_usb = bool(args.host or args.port)
     app.init(skip_voice=skip_voice, skip_auto_usb=skip_auto_usb)
 
+    # When running as bundled EXE with no args, default to web mode
+    web_mode = args.web or args.desktop
+    if getattr(sys, "frozen", False) and not args.command and not web_mode:
+        web_mode = True
+
     if args.desktop:
         _run_desktop(app, host=args.web_host, port=args.web_port)
-    elif args.web:
+    elif args.web or web_mode:
         _run_web(app, host=args.web_host, port=args.web_port)
     elif args.command:
         # Non-interactive: execute single command
@@ -286,6 +319,8 @@ def _run_web(app: "AgentApp", host: str = "127.0.0.1", port: int = 8080) -> None
     import uvicorn
     from agent.ui.web_server import AgentWebServer
 
+    _free_port(port)
+
     web = AgentWebServer()
     web.config = app.config
     web.llm = app.llm
@@ -302,6 +337,17 @@ def _run_web(app: "AgentApp", host: str = "127.0.0.1", port: int = 8080) -> None
     )
 
     print(f"\n  Web UI: http://{host}:{port}\n")
+
+    # Auto-open browser when running as bundled EXE
+    if getattr(sys, "frozen", False):
+        import threading as _threading
+        import webbrowser as _webbrowser
+        def _open_browser():
+            import time as _time
+            _time.sleep(1.0)
+            _webbrowser.open(f"http://{host}:{port}")
+        _threading.Thread(target=_open_browser, daemon=True).start()
+
     uvicorn.run(web.app, host=host, port=port, log_level="info")
 
 
