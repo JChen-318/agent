@@ -348,7 +348,33 @@ def _run_web(app: "AgentApp", host: str = "127.0.0.1", port: int = 8080) -> None
             _webbrowser.open(f"http://{host}:{port}")
         _threading.Thread(target=_open_browser, daemon=True).start()
 
-    uvicorn.run(web.app, host=host, port=port, log_level="info")
+    # Use file-based logging when stderr is unavailable (console=False EXE)
+    uvicorn_kwargs = {"host": host, "port": port, "log_level": "info"}
+    if not sys.stderr or (hasattr(sys.stderr, "isatty") and not sys.stderr.isatty()):
+        uvicorn_kwargs["log_config"] = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                    "datefmt": "%H:%M:%S",
+                },
+            },
+            "handlers": {
+                "default": {
+                    "class": "logging.FileHandler",
+                    "filename": os.path.join(os.path.dirname(sys.executable), "android-agent.log"),
+                    "encoding": "utf-8",
+                    "formatter": "default",
+                },
+            },
+            "loggers": {
+                "uvicorn": {"handlers": ["default"], "level": "INFO"},
+                "uvicorn.error": {"handlers": ["default"], "level": "INFO"},
+                "uvicorn.access": {"handlers": ["default"], "level": "INFO"},
+            },
+        }
+    uvicorn.run(web.app, **uvicorn_kwargs)
 
 
 if __name__ == "__main__":
