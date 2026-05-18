@@ -79,6 +79,7 @@ class LLMClient:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice
+            kwargs["parallel_tool_calls"] = True
 
         last_error: Optional[Exception] = None
         for attempt in range(self.max_retries + 1):
