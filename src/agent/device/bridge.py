@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import random
+import subprocess
 import time
 from typing import Optional
 
@@ -44,6 +45,7 @@ class DeviceBridge:
         self.reconnect_interval = reconnect_interval
         self.max_reconnect_attempts = max_reconnect_attempts
         self.adb_path = adb_path
+        self._adb_serial: Optional[str] = None
         if self.adb_path:
             from pathlib import Path
             p = Path(self.adb_path)
@@ -51,6 +53,7 @@ class DeviceBridge:
                 p = Path.cwd() / p
             if p.exists():
                 self.adb_path = str(p.resolve())
+                self._adb_serial = self._resolve_adb_serial()
             else:
                 logger.warning(f"ADB path doesn't exist: {p}")
                 self.adb_path = None
@@ -63,6 +66,40 @@ class DeviceBridge:
         self._action_cache: dict[tuple, dict] = {}
         self._cache_max_size = 50
         self._cache_ttl = 2.0  # seconds
+
+    def _resolve_adb_serial(self) -> Optional[str]:
+        """Pick the right ADB device serial when multiple are connected.
+        Prefers the device matching self.host if on WiFi, otherwise the sole device."""
+        try:
+            result = subprocess.run(
+                [self.adb_path, "devices"],
+                capture_output=True, text=True, timeout=5,
+            )
+            lines = result.stdout.strip().split("\n")[1:]  # skip "List of devices" header
+            devices = [l.split()[0] for l in lines if l.strip() and "\tdevice" in l]
+            if not devices:
+                logger.warning("No ADB devices found")
+                return None
+            if len(devices) == 1:
+                return devices[0]
+            # Multiple devices: prefer one whose IP matches self.host
+            for d in devices:
+                if self.host in d:
+                    return d
+            # Fall back to first device
+            logger.warning(
+                f"Multiple ADB devices ({devices}), none matching host {self.host}. Using {devices[0]}"
+            )
+            return devices[0]
+        except Exception as e:
+            logger.warning(f"Failed to resolve ADB device serial: {e}")
+            return None
+
+    def _adb_args(self) -> list:
+        """Build ADB command prefix with serial if known."""
+        if self._adb_serial:
+            return [self.adb_path, "-s", self._adb_serial]
+        return [self.adb_path]
 
     async def connect(self) -> None:
         """Connect to phone WebSocket server with auto-reconnect."""
@@ -168,6 +205,31 @@ class DeviceBridge:
                             await asyncio.sleep(delay)
                             last_result = result
                             continue
+                # Screenshot ADB fallback for old devices
+                if action == "screenshot" and result.get("status") != "ok" and self.adb_path:
+                    logger.info("WebSocket screenshot failed, trying ADB screencap...")
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            *self._adb_args(), "exec-out", "screencap", "-p",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+                        if proc.returncode == 0 and stdout:
+                            img_b64 = base64.b64encode(stdout).decode()
+                            return {"status": "ok", "data": {"image_base64": img_b64}, "error": None, "message": None}
+                        else:
+                            logger.warning(
+                                f"ADB screencap: returncode={proc.returncode}, "
+                                f"stdout_len={len(stdout) if stdout else 0}"
+                            )
+                    except asyncio.TimeoutError:
+                        logger.warning("ADB screencap timed out in execute() fallback")
+                    except FileNotFoundError:
+                        logger.warning(f"ADB binary not found at: {self.adb_path}")
+                    except Exception as e:
+                        logger.warning(f"ADB screencap fallback failed: {e}")
+
                 # Cache successful read-only results
                 if action == "get_ui_tree" and result.get("status") == "ok":
                     if len(self._action_cache) >= self._cache_max_size:
@@ -221,7 +283,7 @@ class DeviceBridge:
             logger.info("WebSocket screenshot failed, trying ADB screencap fallback...")
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    self.adb_path, "exec-out", "screencap", "-p",
+                    *self._adb_args(), "exec-out", "screencap", "-p",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )

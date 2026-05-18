@@ -40,6 +40,8 @@ a = Analysis(
         "agent.nlu.app_mapper",
         "agent.nlu.screen_recognizer",
         "agent.nlu.entity_extractor",
+        "agent.nlu.rule_engine",
+        "agent.nlu.path_cache",
         "agent.ui",
         "agent.ui.cli",
         "agent.ui.config",
