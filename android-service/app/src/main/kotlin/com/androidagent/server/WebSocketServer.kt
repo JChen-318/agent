@@ -35,13 +35,13 @@ class AgentWebSocketServer(
 
         override fun onOpen() {
             connectedClients++
-            com.androidagent.service.AgentAccessibilityService.instance?.connectedClients = connectedClients
+            com.androidagent.service.AgentAccessibilityService.connectedClients = connectedClients
             Log.i(TAG, "Client connected: ${handshake.remoteIpAddress} (total: $connectedClients)")
         }
 
         override fun onClose(code: WebSocketFrame.CloseCode, reason: String, initiatedByRemote: Boolean) {
             connectedClients--
-            com.androidagent.service.AgentAccessibilityService.instance?.connectedClients = connectedClients
+            com.androidagent.service.AgentAccessibilityService.connectedClients = connectedClients
             Log.i(TAG, "Client disconnected: $reason (total: $connectedClients)")
         }
 

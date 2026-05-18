@@ -101,7 +101,30 @@ class AgentAccessibilityService : AccessibilityService() {
                 java.util.concurrent.Executors.newSingleThreadExecutor(),
                 object : android.accessibilityservice.AccessibilityService.TakeScreenshotCallback {
                     override fun onSuccess(result: android.accessibilityservice.AccessibilityService.ScreenshotResult) {
-                        future.complete(result.getBitmap())
+                        try {
+                            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                                val buffer = result.hardwareBuffer
+                                if (buffer != null) {
+                                    try {
+                                        Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
+                                            ?.copy(Bitmap.Config.ARGB_8888, false)
+                                    } finally {
+                                        buffer.close()
+                                    }
+                                } else null
+                            } else {
+                                // API 30-33: getBitmap() removed from SDK 36 stubs, use reflection
+                                try {
+                                    val method = result.javaClass.getMethod("getBitmap")
+                                    method.invoke(result) as? Bitmap
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
+                            future.complete(bitmap)
+                        } catch (e: Exception) {
+                            future.complete(null)
+                        }
                     }
                     override fun onFailure(errorCode: Int) {
                         future.complete(null)

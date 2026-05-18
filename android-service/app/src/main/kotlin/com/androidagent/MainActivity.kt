@@ -79,7 +79,7 @@ class MainActivity : Activity() {
         // NSD status
         val nsdText = findViewById<TextView>(R.id.nsdStatusText)
         val svc = AgentAccessibilityService.instance
-        if (svc != null && svc.nsdRegistered) {
+        if (svc != null && AgentAccessibilityService.nsdRegistered) {
             nsdText.text = "mDNS: Advertising on network"
         } else if (svc != null) {
             nsdText.text = "mDNS: Not advertising"
@@ -89,7 +89,7 @@ class MainActivity : Activity() {
 
         // Client count
         val clientsText = findViewById<TextView>(R.id.clientsText)
-        val clientCount = svc?.connectedClients ?: 0
+        val clientCount = AgentAccessibilityService.connectedClients
         clientsText.text = "Clients: $clientCount"
     }
 
