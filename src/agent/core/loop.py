@@ -51,6 +51,7 @@ class AgentLoop:
         # Decision cache: (ui_hash, user_intent) → list of tool calls
         self._decision_cache: dict[tuple, list] = {}
         self._cache_max_size = 100
+        self._recently_popped: set = set()  # Keys popped this iteration, skip re-cache
 
         # Pre-fetched UI tree (captured during LLM call)
         self._prefetched_ui: Optional[dict] = None
@@ -224,12 +225,14 @@ class AgentLoop:
     async def _process_request(self, user_input: str) -> None:
         """Run the ReAct loop for a single user request (no task decomposition)."""
         self.state.add_message("user", user_input)
+        self._recently_popped.clear()
         logger.info(f"Processing: {user_input}")
         exit_on_text = self.state.mode == InteractionMode.SINGLE_COMMAND
         await self._re_act_loop(exit_on_text=exit_on_text)
 
     async def _process_sub_task(self, task_description: str) -> None:
         """Run the ReAct loop for a single sub-task (always waits for task_complete)."""
+        self._recently_popped.clear()
         await self._re_act_loop(exit_on_text=False)
 
     async def _re_act_loop(self, *, exit_on_text: bool) -> None:
@@ -240,15 +243,19 @@ class AgentLoop:
             if self.state.last_ui_hash and self._last_ui_hash:
                 cache_key = (self.state.last_ui_hash, self._user_intent_hash())
                 if cache_key in self._decision_cache:
-                    cached_calls = self._decision_cache[cache_key]
+                    cached_calls = self._decision_cache.pop(cache_key)
+                    self._recently_popped.add(cache_key)
                     logger.info(f"Cache hit — replaying {len(cached_calls)} tool calls")
+                    had_effect = False
                     for tool_call in cached_calls:
                         await self._execute_tool_call(tool_call)
                         if tool_call["_name"] == "task_complete":
                             return
                         if tool_call["_name"] == "ask_user":
                             break
-                    continue
+                        had_effect = True
+                    if had_effect:
+                        continue
 
             self._last_ui_hash = self.state.last_ui_hash
 
@@ -297,12 +304,12 @@ class AgentLoop:
                 ]
                 self.state.add_message("assistant", None, tool_calls=serialized_calls)
 
-                # Cache these tool calls for this UI state
+                # Track execution results for caching decision
                 cache_key = (self._last_ui_hash, self._user_intent_hash())
-                self._add_to_cache(cache_key, [
-                    {"_name": tc.name, "id": tc.id, **tc.arguments}
-                    for tc in response.tool_calls
-                ])
+                all_succeeded = True
+                cached_specs = []
+                for tc in response.tool_calls:
+                    cached_specs.append({"_name": tc.name, "id": tc.id, **tc.arguments})
 
                 # Track if we need UI refresh after batch
                 ui_changing_actions = 0
@@ -386,8 +393,13 @@ class AgentLoop:
 
                     if result.get("status") == "error":
                         logger.warning(f"Action error: {result.get('error')}")
+                        all_succeeded = False
 
                     await asyncio.sleep(random.uniform(0.02, 0.10))
+
+                # Cache successful tool calls for future reuse
+                if all_succeeded and cache_key not in self._recently_popped:
+                    self._add_to_cache(cache_key, cached_specs)
 
                 # Pre-fetch UI after screen-changing batch
                 if need_ui_refresh:

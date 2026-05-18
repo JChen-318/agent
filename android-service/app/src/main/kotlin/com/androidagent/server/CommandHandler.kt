@@ -100,14 +100,26 @@ class CommandHandler(private val service: AgentAccessibilityService) {
         else CommandResponse.error(cmd.id, "Type failed: no focused editable field")
     }
 
-    private fun handleBack() = CommandResponse.ok("back", message = "back")
-        .also { service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK) }
+    private fun handleBack(): CommandResponse {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        }, 50)
+        return CommandResponse.ok("back", message = "back")
+    }
 
-    private fun handleHome() = CommandResponse.ok("home", message = "home")
-        .also { service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME) }
+    private fun handleHome(): CommandResponse {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
+        }, 50)
+        return CommandResponse.ok("home", message = "home")
+    }
 
-    private fun handleRecentApps() = CommandResponse.ok("recent", message = "recent_apps")
-        .also { service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS) }
+    private fun handleRecentApps(): CommandResponse {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS)
+        }, 50)
+        return CommandResponse.ok("recent", message = "recent_apps")
+    }
 
     private fun handleLaunchApp(cmd: Command): CommandResponse {
         val pkg = cmd.args["package_name"] as? String ?: return badArg(cmd, "package_name")
