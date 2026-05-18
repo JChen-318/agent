@@ -23,12 +23,12 @@ class CommandHandler(private val service: AgentAccessibilityService) {
             "swipe" -> handleSwipe(cmd)
             "scroll" -> handleScroll(cmd)
             "type" -> handleType(cmd)
-            "back" -> handleBack()
-            "home" -> handleHome()
-            "recent_apps" -> handleRecentApps()
+            "back" -> handleBack(cmd)
+            "home" -> handleHome(cmd)
+            "recent_apps" -> handleRecentApps(cmd)
             "launch_app" -> handleLaunchApp(cmd)
             "get_ui_tree" -> handleGetUiTree(cmd)
-            "screenshot" -> handleScreenshot()
+            "screenshot" -> handleScreenshot(cmd)
             "wait" -> handleWait(cmd)
             "ping" -> CommandResponse.ok(cmd.id, message = "pong")
             else -> CommandResponse.error(cmd.id, "Unknown command: ${cmd.type}")
@@ -100,25 +100,25 @@ class CommandHandler(private val service: AgentAccessibilityService) {
         else CommandResponse.error(cmd.id, "Type failed: no focused editable field")
     }
 
-    private fun handleBack(): CommandResponse {
+    private fun handleBack(cmd: Command): CommandResponse {
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
         }, 50)
-        return CommandResponse.ok("back", message = "back")
+        return CommandResponse.ok(cmd.id, message = "back")
     }
 
-    private fun handleHome(): CommandResponse {
+    private fun handleHome(cmd: Command): CommandResponse {
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
         }, 50)
-        return CommandResponse.ok("home", message = "home")
+        return CommandResponse.ok(cmd.id, message = "home")
     }
 
-    private fun handleRecentApps(): CommandResponse {
+    private fun handleRecentApps(cmd: Command): CommandResponse {
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             service.gestureExecutor.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS)
         }, 50)
-        return CommandResponse.ok("recent", message = "recent_apps")
+        return CommandResponse.ok(cmd.id, message = "recent_apps")
     }
 
     private fun handleLaunchApp(cmd: Command): CommandResponse {
@@ -145,17 +145,17 @@ class CommandHandler(private val service: AgentAccessibilityService) {
         return CommandResponse.ok(cmd.id, mapOf("ui_tree" to data))
     }
 
-    private fun handleScreenshot(): CommandResponse {
+    private fun handleScreenshot(cmd: Command): CommandResponse {
         return try {
             val bitmap = service.captureScreenshot()
-                ?: return CommandResponse.error("screenshot", "Screenshot requires Android 14+")
+                ?: return CommandResponse.error(cmd.id, "Screenshot requires Android 14+")
             val stream = java.io.ByteArrayOutputStream()
             bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, stream)
             val base64 = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
             bitmap.recycle()
-            CommandResponse.ok("screenshot", mapOf("image_base64" to base64))
+            CommandResponse.ok(cmd.id, mapOf("image_base64" to base64))
         } catch (e: Exception) {
-            CommandResponse.error("screenshot", "Screenshot failed: ${e.message}")
+            CommandResponse.error(cmd.id, "Screenshot failed: ${e.message}")
         }
     }
 
