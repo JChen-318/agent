@@ -283,18 +283,16 @@ def main() -> None:
     if args.model:
         app.config.llm.model = args.model
 
-    skip_voice = (args.web or args.desktop) and not args.voice
+    # When running as bundled EXE with no args, default to web mode
+    frozen_web = getattr(sys, "frozen", False) and not args.command and not (args.web or args.desktop)
+
+    skip_voice = (args.web or args.desktop or frozen_web) and not args.voice
     skip_auto_usb = bool(args.host or args.port)
     app.init(skip_voice=skip_voice, skip_auto_usb=skip_auto_usb)
 
-    # When running as bundled EXE with no args, default to web mode
-    web_mode = args.web or args.desktop
-    if getattr(sys, "frozen", False) and not args.command and not web_mode:
-        web_mode = True
-
     if args.desktop:
         _run_desktop(app, host=args.web_host, port=args.web_port)
-    elif args.web or web_mode:
+    elif args.web or frozen_web:
         _run_web(app, host=args.web_host, port=args.web_port)
     elif args.command:
         # Non-interactive: execute single command
