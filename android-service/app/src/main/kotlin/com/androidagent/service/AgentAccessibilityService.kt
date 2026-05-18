@@ -92,16 +92,16 @@ class AgentAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
+    @Suppress("DEPRECATION")
     fun captureScreenshot(): Bitmap? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val future = java.util.concurrent.CompletableFuture<Bitmap?>()
             takeScreenshot(
                 android.view.Display.DEFAULT_DISPLAY,
                 java.util.concurrent.Executors.newSingleThreadExecutor(),
-                object : TakeScreenshotCallback {
-                    override fun onSuccess(result: ScreenshotResult) {
-                        val bitmap = result.getBitmap()
-                        future.complete(bitmap)
+                object : android.accessibilityservice.AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(result: android.accessibilityservice.AccessibilityService.ScreenshotResult) {
+                        future.complete(result.getBitmap())
                     }
                     override fun onFailure(errorCode: Int) {
                         future.complete(null)
