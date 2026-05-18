@@ -1,6 +1,7 @@
 """WebSocket client for communicating with the Android device."""
 
 import asyncio
+import base64
 import json
 import logging
 import random
@@ -36,11 +37,23 @@ class DeviceBridge:
         port: int = 18765,
         reconnect_interval: int = 5,
         max_reconnect_attempts: int = 0,
+        adb_path: Optional[str] = None,
     ):
         self.host = host
         self.port = port
         self.reconnect_interval = reconnect_interval
         self.max_reconnect_attempts = max_reconnect_attempts
+        self.adb_path = adb_path
+        if self.adb_path:
+            from pathlib import Path
+            p = Path(self.adb_path)
+            if not p.is_absolute():
+                p = Path.cwd() / p
+            if p.exists():
+                self.adb_path = str(p.resolve())
+            else:
+                logger.warning(f"ADB path doesn't exist: {p}")
+                self.adb_path = None
         self.ws: Optional[ClientConnection] = None
         self.connected = False
         self._request_id = 0
@@ -193,10 +206,38 @@ class DeviceBridge:
         return result.get("data", {})
 
     async def screenshot(self) -> Optional[str]:
-        """Request screenshot from device, returns base64-encoded image."""
+        """Request screenshot from device, returns base64-encoded JPEG.
+        Falls back to ADB screencap if WebSocket method fails or device is old.
+        """
+        # Try WebSocket screenshot first
         result = await self.execute("screenshot", {})
         data = result.get("data", {})
-        return data.get("image_base64")
+        ws_image = data.get("image_base64")
+        if ws_image:
+            return ws_image
+
+        # Fallback: ADB screencap (works on Android 8+)
+        if self.adb_path:
+            logger.info("WebSocket screenshot failed, trying ADB screencap fallback...")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    self.adb_path, "exec-out", "screencap", "-p",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+                if proc.returncode == 0 and stdout:
+                    # Convert PNG to base64
+                    return base64.b64encode(stdout).decode()
+                logger.warning(f"ADB screencap failed: {stderr.decode() if stderr else 'no output'}")
+            except asyncio.TimeoutError:
+                logger.warning("ADB screencap timed out")
+            except FileNotFoundError:
+                logger.warning(f"ADB binary not found: {self.adb_path}")
+            except Exception:
+                logger.exception("ADB screencap unexpected error")
+
+        return None
 
     async def ping(self, timeout: float = 5.0) -> bool:
         """Check if device is responsive."""

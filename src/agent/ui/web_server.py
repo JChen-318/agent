@@ -78,6 +78,7 @@ class AgentWebServer:
             port=self.config.device.port,
             reconnect_interval=self.config.device.reconnect_interval,
             max_reconnect_attempts=self.config.device.max_reconnect_attempts,
+            adb_path=self.config.device.adb_path or None,
         )
         mode = InteractionMode.CONTINUOUS
         safety = SafetyLevel(self.config.safety.confirmation_level)

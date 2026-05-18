@@ -18,6 +18,7 @@ device:
   port: "${DEVICE_PORT:-18765}"
   reconnect_interval: 5
   max_reconnect_attempts: 0  # 0 = infinite
+  adb_path: "${ADB_PATH:-}"
 
 whisper:
   model_size: "${WHISPER_MODEL_SIZE:-small}"

@@ -122,6 +122,7 @@ class AgentApp:
             port=self.config.device.port,
             reconnect_interval=self.config.device.reconnect_interval,
             max_reconnect_attempts=self.config.device.max_reconnect_attempts,
+            adb_path=self.config.device.adb_path or None,
         )
 
         self._adb: Optional[AdbManager] = None

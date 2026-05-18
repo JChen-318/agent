@@ -36,6 +36,7 @@ class DeviceConfig(BaseModel):
     port: int = 18765
     reconnect_interval: int = 5
     max_reconnect_attempts: int = 0
+    adb_path: str = ""
 
 
 class WhisperConfig(BaseModel):
