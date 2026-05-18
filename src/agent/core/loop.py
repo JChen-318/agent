@@ -383,6 +383,14 @@ class AgentLoop:
                 ui_changing_actions = 0
                 need_ui_refresh = False
 
+                # Start background UI fetch while executing tools (parallelize LLM+UI)
+                _screen_changers = {"launch_app", "click", "click_by_text", "back", "home",
+                                    "recent_apps", "scroll", "swipe", "long_press"}
+                _has_changers = any(tc.name in _screen_changers for tc in response.tool_calls)
+                _bg_ui_fetch: "Optional[asyncio.Task]" = None
+                if _has_changers:
+                    _bg_ui_fetch = asyncio.create_task(self.device.get_ui_tree())
+
                 for i, tool_call in enumerate(response.tool_calls):
                     action = tool_call.name
                     args = tool_call.arguments
@@ -469,13 +477,21 @@ class AgentLoop:
                 if all_succeeded and cache_key not in self._recently_popped:
                     self._add_to_cache(cache_key, cached_specs)
 
-                # Pre-fetch UI after screen-changing batch
+                # Pre-fetch UI after screen-changing batch (reuse background fetch if ready)
                 if need_ui_refresh:
                     try:
-                        self._prefetched_ui = await self.device.get_ui_tree()
+                        if _bg_ui_fetch and _bg_ui_fetch.done():
+                            self._prefetched_ui = _bg_ui_fetch.result()
+                        elif _bg_ui_fetch:
+                            self._prefetched_ui = await _bg_ui_fetch
+                        else:
+                            self._prefetched_ui = await self.device.get_ui_tree()
                         self._ui_fresh = True
                     except Exception:
-                        pass
+                        if _bg_ui_fetch and not _bg_ui_fetch.done():
+                            _bg_ui_fetch.cancel()
+                    finally:
+                        _bg_ui_fetch = None
             else:
                 text = response.content
                 if text:
@@ -583,11 +599,12 @@ class AgentLoop:
                 "role": "user",
                 "content": f"[UI]:\n{ui_text}",
             })
-        elif not any("UI unchanged" in str(m.get("content", "")) for m in messages[-1:]):
-            # UI unchanged — just add a note if actions failed
+        elif not any("[UI snapshot]" in str(m.get("content", "")) for m in messages[-2:]):
+            # UI unchanged — inject compact summary to save tokens
+            summary = self.state.get_ui_summary()
             messages.append({
                 "role": "user",
-                "content": "[UI unchanged — previous actions may not have had effect. Try alternative.]",
+                "content": f"[UI snapshot]:\n{summary}",
             })
 
         # Trim to budget

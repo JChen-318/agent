@@ -118,10 +118,18 @@ class GlobalState:
             return False
 
         def _is_status_bar(node: UIElement) -> bool:
-            """Detect and skip status bar area (top ~80px)."""
+            """Detect status bar area (top ~80px). Skip entirely — no children processed."""
             if node.bounds:
                 b = node.bounds
-                if b.get("top", 0) < 80 and b.get("bottom", 0) < 80 and not node.is_clickable:
+                if b.get("top", 0) < 80 and b.get("bottom", 0) <= 120 and not node.is_clickable:
+                    return True
+            return False
+
+        def _is_nav_bar(node: UIElement) -> bool:
+            """Detect navigation bar area (bottom ~130px). Skip non-clickable elements."""
+            if node.bounds and screen_height > 0:
+                b = node.bounds
+                if b.get("top", 0) > screen_height - 130 and not node.is_clickable and not node.is_scrollable:
                     return True
             return False
 
@@ -133,9 +141,8 @@ class GlobalState:
             if prune:
                 if not node.is_enabled and depth > 0:
                     return
-                # Skip invisible areas (status bar, navigation bar)
-                if _is_status_bar(node):
-                    pass  # Still process children - some overlays appear here
+                if _is_status_bar(node) or _is_nav_bar(node):
+                    return  # Skip status bar and navigation bar entirely
                 # Skip empty layout containers
                 if not _is_actionable(node) and node.children:
                     for child in node.children:
