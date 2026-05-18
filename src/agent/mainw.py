@@ -1,4 +1,4 @@
-"""GUI entry point — no console window. Always launches in desktop mode."""
+"""GUI entry point — native tkinter desktop app, no browser, no HTML, no webview."""
 import sys
 import os
 import datetime
@@ -18,10 +18,9 @@ def _log(msg: str) -> None:
 
 
 try:
-    _log("Desktop agent starting...")
+    _log("Native desktop agent starting...")
 
     # When console=False, PyInstaller sets std* to None.
-    # Redirect to os.devnull so libraries (uvicorn, etc.) don't crash on .isatty() or .write().
     _devnull = open(os.devnull, "w")
     if sys.stderr is None:
         sys.stderr = _devnull
@@ -30,14 +29,11 @@ try:
     if sys.stdin is None:
         sys.stdin = open(os.devnull, "r")
 
-    # Default to desktop mode when launched as GUI
-    if "--desktop" not in sys.argv and "--web" not in sys.argv and "--command" not in sys.argv:
-        sys.argv.append("--desktop")
+    from agent.ui.desktop_native import DesktopApp
 
-    from agent.ui.cli import main
+    app = DesktopApp()
+    app.run()
 
-    if __name__ == "__main__":
-        main()
     _log("Desktop agent exited normally")
 except Exception as e:
     _log(f"FATAL ERROR: {e}\n{traceback.format_exc()}")
