@@ -14,6 +14,7 @@ from agent.llm.prompts import SYSTEM_PROMPT, FEW_SHOT_EXAMPLES
 from agent.llm.tools import TOOL_DEFINITIONS
 from agent.device.bridge import DeviceBridge
 from agent.device.executor import ActionExecutor
+from agent.nlu.rule_engine import match as rule_match, get_next_action as rule_next_action
 
 if TYPE_CHECKING:
     from agent.speech.transcriber import Transcriber
@@ -159,6 +160,7 @@ class AgentLoop:
     async def process_text_input(self, text: str) -> LLMResponse:
         """Public API: process a text command directly. Returns final LLM response."""
         self.running = True
+        self.state.reset()
         try:
             if self._should_use_planning(text):
                 await self._run_with_plan(text)
@@ -276,7 +278,64 @@ class AgentLoop:
             # 2. Build LLM context (pruned UI tree)
             messages = self._build_messages()
 
-            # 3. Call LLM (asynchronously pre-fetch next UI if action will cause change)
+            # 3. Rule engine check — bypass LLM for predictable operations
+            response = await self._try_rules()
+            if response is not None:
+                # Rule engine returned tool calls — process them
+                tool_calls = response
+                serialized = [
+                    {
+                        "id": tc.get("id", f"rule_{i}"),
+                        "type": "function",
+                        "function": {
+                            "name": tc["_name"],
+                            "arguments": json.dumps(
+                                {k: v for k, v in tc.items() if k not in ("_name", "id")},
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                    for i, tc in enumerate(tool_calls)
+                ]
+                self.state.add_message("assistant", None, tool_calls=serialized)
+
+                for tc in tool_calls:
+                    action = tc["_name"]
+                    args = {k: v for k, v in tc.items() if k not in ("_name", "id")}
+
+                    if action == "task_complete":
+                        summary = args.get("summary", "Done")
+                        self.state.add_message("assistant", summary)
+                        logger.info(f"Rule: task_complete — {summary}")
+                        if self.on_speak:
+                            self.on_speak(summary)
+                        return
+
+                    if action == "ask_user":
+                        break
+
+                    # Safety check
+                    block_reason = self.state.check_safety(action, args)
+                    if block_reason:
+                        self.state.add_message("tool", {"error": block_reason, "blocked": True},
+                                              tool_call_id=tc.get("id"))
+                        continue
+
+                    # Execute action
+                    logger.info(f"Rule: executing {action}({args})")
+                    if self.on_action:
+                        self.on_action(action, args)
+                    result = await self.device.execute(action, args)
+                    self.state.add_message("tool", result, tool_call_id=tc.get("id"))
+
+                    if result.get("status") == "error":
+                        logger.warning(f"Rule action error: {result.get('error')}")
+
+                    await asyncio.sleep(random.uniform(0.02, 0.08))
+
+                continue  # Rule actions done, loop for next iteration
+
+            # 4. Call LLM (asynchronously pre-fetch next UI if action will cause change)
             logger.info(f"Calling LLM ({len(messages)} messages)...")
             response = await self.llm.chat(
                 messages=messages,
@@ -289,7 +348,7 @@ class AgentLoop:
                 f"finish={response.finish_reason}"
             )
 
-            # 4. Process ALL tool calls in batch before re-calling LLM
+            # 5. Process ALL tool calls in batch before re-calling LLM
             if response.tool_calls:
                 serialized_calls = [
                     {
@@ -425,6 +484,44 @@ class AgentLoop:
                 logger.warning(f"Max iterations ({max_iters}) reached")
                 self.state.add_message("assistant", f"Reached maximum steps ({max_iters}). Stopping.")
                 return
+
+    async def _try_rules(self) -> Optional[list[dict]]:
+        """Check if the rule engine can handle the current situation.
+        Returns list of tool calls (with _name keys) or None to fall through to LLM.
+        """
+        # Get the last user message
+        last_user_text = ""
+        for msg in reversed(self.state.messages):
+            if msg["role"] == "user" and msg.get("content"):
+                content = msg["content"]
+                if not content.startswith("[UI") and not content.startswith("[App"):
+                    last_user_text = content
+                    break
+
+        if not last_user_text:
+            return None
+
+        # First iteration: check intent rules (no history beyond system prompt + first message)
+        history = self.state.get_recent_history(30)
+        user_msg_count = sum(1 for m in history if m["role"] == "user"
+                            and not str(m.get("content", "")).startswith("[UI"))
+        if user_msg_count <= 1:
+            result = rule_match(last_user_text, self.state.ui_tree)
+            if result:
+                return result
+
+        # Subsequent iterations: check screen-level rules for single obvious next step
+        if self.state.ui_tree:
+            next_action = rule_next_action(self.state.ui_tree)
+            if next_action:
+                # Check if we should take this action (don't auto-dismiss unless context fits)
+                # Only auto-trigger screen rules on iterations > 1 where the LLM might
+                # otherwise waste a call on a predictable action
+                if self.state.iteration_count > 0:
+                    logger.info(f"Rule: auto screen action {next_action['_name']}")
+                    return [next_action]
+
+        return None
 
     async def _execute_tool_call(self, tc: dict) -> None:
         """Replay a cached tool call without LLM."""
