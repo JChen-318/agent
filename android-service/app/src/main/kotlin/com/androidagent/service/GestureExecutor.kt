@@ -54,22 +54,31 @@ class GestureExecutor(private val service: AccessibilityService) {
     fun typeText(text: String, clearFirst: Boolean = true): Boolean {
         val root = service.rootInActiveWindow ?: return false
 
-        // Find focused editable node (child must be used before parent is recycled)
         val focused = findFocusedEditable(root)
 
         if (focused != null) {
-            if (clearFirst) {
+            // For short text, use ACTION_SET_TEXT directly (faster, no clipboard)
+            if (text.length <= 100) {
                 val args = Bundle().apply {
-                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+                    putCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        if (clearFirst) text else ((focused.text?.toString() ?: "") + text)
+                    )
                 }
                 focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            } else {
+                // Long text: clear first, then paste via clipboard
+                if (clearFirst) {
+                    val args = Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+                    }
+                    focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                }
+                val clipboard = service.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("agent_input", text)
+                clipboard.setPrimaryClip(clip)
+                focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             }
-
-            // Paste text via clipboard
-            val clipboard = service.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("agent_input", text)
-            clipboard.setPrimaryClip(clip)
-            focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             focused.recycle()
             root.recycle()
             return true

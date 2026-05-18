@@ -92,7 +92,28 @@ FEW_SHOT_EXAMPLES = [
             },
         ],
     },
-    # Example 3: Launch app + interact via click_by_text (4 tool calls)
+    # Example 3: Scroll multiple times in one call (batch scroll steps)
+    {
+        "role": "user",
+        "content": "往下翻几页",
+    },
+    {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_ex3_1",
+                "type": "function",
+                "function": {"name": "scroll", "arguments": '{"direction": "forward", "steps": 3}'},
+            },
+            {
+                "id": "call_ex3_2",
+                "type": "function",
+                "function": {"name": "task_complete", "arguments": '{"summary": "已向下滚动3页"}'},
+            },
+        ],
+    },
+    # Example 4: Launch app + interact via click_by_text (4 tool calls)
     {
         "role": "user",
         "content": "打开设置里的WiFi",
@@ -102,22 +123,22 @@ FEW_SHOT_EXAMPLES = [
         "content": None,
         "tool_calls": [
             {
-                "id": "call_ex3_1",
+                "id": "call_ex4_1",
                 "type": "function",
                 "function": {"name": "launch_app", "arguments": '{"package_name": "com.android.settings"}'},
             },
             {
-                "id": "call_ex3_2",
+                "id": "call_ex4_2",
                 "type": "function",
                 "function": {"name": "wait", "arguments": '{"duration_ms": 2500}'},
             },
             {
-                "id": "call_ex3_3",
+                "id": "call_ex4_3",
                 "type": "function",
                 "function": {"name": "click_by_text", "arguments": '{"text": "WiFi"}'},
             },
             {
-                "id": "call_ex3_4",
+                "id": "call_ex4_4",
                 "type": "function",
                 "function": {"name": "task_complete", "arguments": '{"summary": "已打开WiFi设置"}'},
             },

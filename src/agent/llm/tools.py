@@ -184,8 +184,37 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_ui_tree",
-            "description": "Refresh and get the current UI tree. Call this after any action that changes the screen to verify the new state.",
-            "parameters": {"type": "object", "properties": {}},
+            "description": "Refresh and get the current UI tree (shallow by default for performance). Call this after any action that changes the screen.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Maximum depth to capture (default 6 for fast loading, use 3 for overview, 10+ for full detail).",
+                        "default": 6,
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "expand_node",
+            "description": "Lazy-load: expand a specific node at given coordinates to see its full subtree. Use when get_ui_tree truncated a node you need to inspect. Costs less than full get_ui_tree.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "description": "X coordinate of the node to expand"},
+                    "y": {"type": "integer", "description": "Y coordinate of the node to expand"},
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Max depth for expanded subtree (default 10).",
+                        "default": 10,
+                    },
+                },
+                "required": ["x", "y"],
+            },
         },
     },
     {

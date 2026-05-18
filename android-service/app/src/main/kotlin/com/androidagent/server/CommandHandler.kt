@@ -28,6 +28,7 @@ class CommandHandler(private val service: AgentAccessibilityService) {
             "recent_apps" -> handleRecentApps(cmd)
             "launch_app" -> handleLaunchApp(cmd)
             "get_ui_tree" -> handleGetUiTree(cmd)
+            "expand_node" -> handleExpandNode(cmd)
             "screenshot" -> handleScreenshot(cmd)
             "wait" -> handleWait(cmd)
             "ping" -> CommandResponse.ok(cmd.id, message = "pong")
@@ -143,6 +144,20 @@ class CommandHandler(private val service: AgentAccessibilityService) {
         val treeJson = gson.toJsonTree(tree).asJsonObject
         val data = gson.fromJson(treeJson, Map::class.java) as Map<String, Any?>
         return CommandResponse.ok(cmd.id, mapOf("ui_tree" to data))
+    }
+
+    private fun handleExpandNode(cmd: Command): CommandResponse {
+        val x = (cmd.args["x"] as? Number)?.toInt() ?: return badArg(cmd, "x")
+        val y = (cmd.args["y"] as? Number)?.toInt() ?: return badArg(cmd, "y")
+        val maxDepth = (cmd.args["max_depth"] as? Number)?.toInt() ?: 10
+        val tree = service.uiTreeCapturer.expandNode(x, y, maxDepth)
+        return if (tree != null) {
+            val treeJson = gson.toJsonTree(tree).asJsonObject
+            val data = gson.fromJson(treeJson, Map::class.java) as Map<String, Any?>
+            CommandResponse.ok(cmd.id, mapOf("ui_tree" to data))
+        } else {
+            CommandResponse.error(cmd.id, "No node found at ($x, $y)")
+        }
     }
 
     private fun handleScreenshot(cmd: Command): CommandResponse {

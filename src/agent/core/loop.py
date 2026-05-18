@@ -15,6 +15,7 @@ from agent.llm.tools import TOOL_DEFINITIONS
 from agent.device.bridge import DeviceBridge
 from agent.device.executor import ActionExecutor
 from agent.nlu.rule_engine import match as rule_match, get_next_action as rule_next_action
+from agent.nlu.path_cache import PathCache
 
 if TYPE_CHECKING:
     from agent.speech.transcriber import Transcriber
@@ -56,6 +57,9 @@ class AgentLoop:
 
         # Pre-fetched UI tree (captured during LLM call)
         self._prefetched_ui: Optional[dict] = None
+
+        # Path cache for known app UI patterns
+        self._path_cache = PathCache()
 
         # Callbacks
         self.on_speak: Optional[callable] = None
@@ -146,15 +150,20 @@ class AgentLoop:
         return None
 
     def _should_use_planning(self, user_input: str) -> bool:
-        """Heuristic: use planning for complex multi-step goals."""
+        """Heuristic: use planning for multi-step goals (lowered threshold)."""
         if self.planner is None:
             return False
         words = user_input.split()
-        if len(words) >= 8:
+        if len(words) >= 5:  # lowered from 8
+            return True
+        # Multi-step connectors
+        connectors = {"然后", "之后", "并且", "再", "接着", "and", "then", "also", "after"}
+        if any(c in user_input.lower() for c in connectors):
             return True
         complex_verbs = {"send", "search", "find", "post", "create", "delete", "share",
                          "schedule", "book", "order", "buy", "play", "navigate",
-                         "发", "搜", "找", "购", "订", "买", "预约", "导航", "播放"}
+                         "发", "搜", "找", "购", "订", "买", "预约", "导航", "播放",
+                         "搜索", "发送", "分享", "下单", "预定"}
         return any(v in user_input.lower() for v in complex_verbs)
 
     async def process_text_input(self, text: str) -> LLMResponse:
@@ -477,6 +486,15 @@ class AgentLoop:
                 if all_succeeded and cache_key not in self._recently_popped:
                     self._add_to_cache(cache_key, cached_specs)
 
+                    # Also save to path cache (app/page level, durable)
+                    try:
+                        from agent.nlu.screen_recognizer import recognize_app, recognize_page_type
+                        app = recognize_app(self.state.ui_tree) or "unknown"
+                        page = recognize_page_type(self.state.ui_tree) or "unknown"
+                        self._path_cache.set(app, page, self._user_intent_hash(), cached_specs)
+                    except Exception:
+                        pass
+
                 # Pre-fetch UI after screen-changing batch (reuse background fetch if ready)
                 if need_ui_refresh:
                     try:
@@ -533,12 +551,22 @@ class AgentLoop:
         if self.state.ui_tree:
             next_action = rule_next_action(self.state.ui_tree)
             if next_action:
-                # Check if we should take this action (don't auto-dismiss unless context fits)
-                # Only auto-trigger screen rules on iterations > 1 where the LLM might
-                # otherwise waste a call on a predictable action
                 if self.state.iteration_count > 0:
                     logger.info(f"Rule: auto screen action {next_action['_name']}")
                     return [next_action]
+
+        # Check path cache before falling back to LLM
+        if self.state.ui_tree and last_user_text:
+            try:
+                from agent.nlu.screen_recognizer import recognize_app, recognize_page_type
+                app = recognize_app(self.state.ui_tree) or "unknown"
+                page = recognize_page_type(self.state.ui_tree) or "unknown"
+                cached = self._path_cache.get(app, page, last_user_text)
+                if cached:
+                    logger.info(f"Path cache hit: {app}/{page}")
+                    return cached
+            except Exception:
+                pass
 
         return None
 

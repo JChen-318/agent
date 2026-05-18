@@ -69,8 +69,14 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Events are captured on-demand via get_ui_tree command.
-        // Could be extended for push-based event notification.
+        if (event != null) {
+            when (event.eventType) {
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                    uiTreeCapturer.contentChangedSinceLastCapture = true
+                }
+            }
+        }
     }
 
     override fun onInterrupt() {

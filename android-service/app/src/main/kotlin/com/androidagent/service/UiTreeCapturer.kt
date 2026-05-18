@@ -14,14 +14,46 @@ class UiTreeCapturer(private val service: AccessibilityService) {
         private const val MAX_TEXT_LEN = 128
     }
 
+    // Incremental parsing: cache last tree, skip re-serialization if unchanged
+    @Volatile
+    var contentChangedSinceLastCapture: Boolean = true
+
+    private var cachedTree: UiNode? = null
+    private var cachedTreeJson: String? = null
+
     fun capture(maxDepth: Int = MAX_DEPTH): UiNode {
+        // Return cached tree if content hasn't changed (incremental optimization)
+        if (!contentChangedSinceLastCapture && cachedTree != null) {
+            Log.d(TAG, "Using cached UI tree (no content change)")
+            return cachedTree!!
+        }
+
         val root = service.rootInActiveWindow
-        return if (root != null) {
-            val tree = serializeNode(root, depth = 0, maxDepth = maxDepth)
+        val tree = if (root != null) {
+            val t = serializeNode(root, depth = 0, maxDepth = maxDepth)
+            root.recycle()
+            t
+        } else {
+            UiNode(type = "Root", text = "[No active window]")
+        }
+
+        cachedTree = tree
+        contentChangedSinceLastCapture = false
+        return tree
+    }
+
+    /** Lazy loading: expand a specific node at given coordinates to get its full subtree. */
+    fun expandNode(x: Int, y: Int, maxDepth: Int = 10): UiNode? {
+        val root = service.rootInActiveWindow ?: return null
+        val node = findNodeAt(root, x, y, 0)
+        return if (node != null) {
+            val tree = serializeNode(node, depth = 0, maxDepth = maxDepth)
+            node.recycle()
             root.recycle()
             tree
         } else {
-            UiNode(type = "Root", text = "[No active window]")
+            root.recycle()
+            null
         }
     }
 
@@ -122,5 +154,33 @@ class UiTreeCapturer(private val service: AccessibilityService) {
             child.recycle()
         }
         return null
+    }
+
+    /** Find the deepest node at given coordinates (for expand_node). */
+    private fun findNodeAt(
+        node: AccessibilityNodeInfo,
+        x: Int,
+        y: Int,
+        depth: Int
+    ): AccessibilityNodeInfo? {
+        if (depth > 15) return null
+        val rect = android.graphics.Rect()
+        node.getBoundsInScreen(rect)
+        if (!rect.contains(x, y)) return null
+
+        // Recurse into children first to find the deepest match
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findNodeAt(child, x, y, depth + 1)
+            if (found != null) {
+                if (child != found) child.recycle()
+                return found
+            }
+            child.recycle()
+        }
+        // No deeper match — return this node (clone since caller will recycle)
+        return if (node.isVisibleToUser) {
+            AccessibilityNodeInfo.obtain(node)
+        } else null
     }
 }

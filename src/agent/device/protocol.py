@@ -28,6 +28,7 @@ class CommandType(StrEnum):
 
     # State actions
     GET_UI_TREE = "get_ui_tree"
+    EXPAND_NODE = "expand_node"
     SCREENSHOT = "screenshot"
     WAIT = "wait"
 
