@@ -241,6 +241,15 @@ class AgentLoop:
         """Core ReAct loop: observe → think → batch act. Repeat until task_complete."""
 
         while self.running:
+            self.state.iteration_count += 1
+
+            # Prevent infinite loops
+            max_iters = self.state.max_iterations if self.state.current_plan is None else 30
+            if self.state.iteration_count > max_iters:
+                logger.warning(f"Max iterations ({max_iters}) reached")
+                self.state.add_message("assistant", f"Reached maximum steps ({max_iters}). Stopping.")
+                return
+
             # Cache check: same UI + same last user message
             if self.state.last_ui_hash and self._last_ui_hash:
                 cache_key = (self.state.last_ui_hash, self._user_intent_hash())
@@ -478,13 +487,7 @@ class AgentLoop:
                 if exit_on_text:
                     return
 
-            # Prevent infinite loops
-            max_iters = self.state.max_iterations if self.state.current_plan is None else 30
-            if self.state.iteration_count > max_iters:
-                logger.warning(f"Max iterations ({max_iters}) reached")
-                self.state.add_message("assistant", f"Reached maximum steps ({max_iters}). Stopping.")
-                return
-
+            # (iteration limit checked at loop start)
     async def _try_rules(self) -> Optional[list[dict]]:
         """Check if the rule engine can handle the current situation.
         Returns list of tool calls (with _name keys) or None to fall through to LLM.

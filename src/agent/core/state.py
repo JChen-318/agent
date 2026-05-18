@@ -90,7 +90,6 @@ class GlobalState:
         self._prev_ui_hash = self.last_ui_hash
         if ui_tree_raw:
             self.ui_tree = UIElement.from_dict(ui_tree_raw)
-        self.iteration_count += 1
 
     def format_ui_tree_for_llm(self, max_depth: int = 5, max_text_len: int = 60,
                               prune: bool = True, max_lines: int = 120) -> str:
