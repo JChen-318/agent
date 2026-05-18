@@ -3,12 +3,16 @@ package com.androidagent
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import com.androidagent.service.AgentAccessibilityService
@@ -94,6 +98,24 @@ class MainActivity : Activity() {
     }
 
     private fun getWifiIpAddress(): String? {
+        // Method 1: ConnectivityManager (most reliable on Android 10+)
+        try {
+            val cm = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val network = cm?.activeNetwork
+            if (network != null) {
+                val linkProps = cm.getLinkProperties(network)
+                linkProps?.linkAddresses?.forEach { addr ->
+                    val inetAddr = addr.address
+                    if (!inetAddr.isLoopbackAddress && inetAddr is Inet4Address) {
+                        return inetAddr.hostAddress
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(App.TAG, "ConnectivityManager IP lookup failed", e)
+        }
+
+        // Method 2: WifiManager (works on older Android)
         try {
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             if (wifiManager != null) {
@@ -108,14 +130,19 @@ class MainActivity : Activity() {
                     )
                 }
             }
+        } catch (e: Exception) {
+            Log.w(App.TAG, "WifiManager IP lookup failed", e)
+        }
 
-            // Fallback: enumerate network interfaces (works for Ethernet too)
+        // Method 3: Enumerate NetworkInterface (broadest fallback, excludes link-local)
+        try {
             return NetworkInterface.getNetworkInterfaces()?.toList()?.firstNotNullOfOrNull { iface ->
                 iface.inetAddresses?.toList()?.firstOrNull { addr ->
-                    !addr.isLoopbackAddress && addr is Inet4Address
+                    !addr.isLoopbackAddress && addr is Inet4Address && !addr.isLinkLocalAddress
                 }?.hostAddress
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(App.TAG, "NetworkInterface IP lookup failed", e)
             return null
         }
     }
