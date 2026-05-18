@@ -33,6 +33,10 @@ def run_desktop(app, host: str = "127.0.0.1", port: int = 8080) -> None:
     # Start mDNS device discovery
     web._start_discovery()
 
+    # Kill stale process on default port before looking for available
+    from agent.ui.cli import _free_port
+    _free_port(port)
+
     # Find an available port (handle stale process occupying default port)
     port = _find_available_port(host, port)
 
