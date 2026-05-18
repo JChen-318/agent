@@ -25,6 +25,8 @@ class PathCache:
 
     def __init__(self, cache_file: Optional[Path] = None):
         self._cache: dict[str, dict] = {}
+        if isinstance(cache_file, str):
+            cache_file = Path(cache_file)
         self._cache_file = cache_file
         if cache_file and cache_file.exists():
             self._load()
