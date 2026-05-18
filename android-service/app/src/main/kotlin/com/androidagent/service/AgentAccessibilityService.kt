@@ -29,13 +29,12 @@ class AgentAccessibilityService : AccessibilityService() {
         var instance: AgentAccessibilityService? = null
             private set
 
-    @Volatile
-    var nsdRegistered: Boolean = false
-        private set
+        @Volatile
+        var nsdRegistered: Boolean = false
+            private set
 
-    @Volatile
-    var connectedClients: Int = 0
-        private set
+        @Volatile
+        var connectedClients: Int = 0
     }
 
     lateinit var gestureExecutor: GestureExecutor
@@ -98,15 +97,17 @@ class AgentAccessibilityService : AccessibilityService() {
             val future = java.util.concurrent.CompletableFuture<Bitmap?>()
             takeScreenshot(
                 android.view.Display.DEFAULT_DISPLAY,
-                java.util.concurrent.Executors.newSingleThreadExecutor()
-            ) { screenshot ->
-                if (screenshot != null) {
-                    future.complete(screenshot.copy(screenshot.config!!, true))
-                    screenshot.recycle()
-                } else {
-                    future.complete(null)
+                java.util.concurrent.Executors.newSingleThreadExecutor(),
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        val bitmap = result.getBitmap()
+                        future.complete(bitmap)
+                    }
+                    override fun onFailure(errorCode: Int) {
+                        future.complete(null)
+                    }
                 }
-            }
+            )
             try {
                 return future.get(3, java.util.concurrent.TimeUnit.SECONDS)
             } catch (_: Exception) {
